@@ -49,7 +49,7 @@ function resizeCanvas() {
 
     // パドルの初期位置をリセット
     if (paddle) {
-        paddle.y = GAME_HEIGHT - Math.max(paddle.height * 2, 40);
+        paddle.y = GAME_HEIGHT - 100; // スマホのアドレスバー・ホームバー対策で高めに配置
     }
 
     // おじさんの描画領域事前計算
@@ -97,7 +97,7 @@ function setupStage() {
     // パドルの生成（扇風機）
     paddle = {
         x: GAME_WIDTH / 2 - paddleOriginalWidth / 2,
-        y: GAME_HEIGHT - 50,
+        y: GAME_HEIGHT - 100, // スマホのアドレスバー・ホームバー対策で高めに配置
         width: paddleOriginalWidth,
         height: 15,
         color: '#ff9800'
