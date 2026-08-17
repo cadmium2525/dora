@@ -9,6 +9,7 @@ const LS_KEY_GIFT_INPUT = 'line_gift_last_input';
 const LS_KEY_BLOODLINE = 'mf_bloodline_data';       // 元ツールと互換のキー名
 const LS_KEY_NOBLE = 'mf_sim_noble_data';           // 元ツールと互換のキー名
 const LS_KEY_OWNED_AURA = 'line_owned_road_aura';   // 所持ロード秘伝オーラ（詳細探索で使用予定）
+const LS_KEY_PATCH = 'mf_sim_patch_data';           // 基礎相性値の手動修正差分（元ツールと互換のキー名）
 
 const ROAD_AURA_COLORS = [
     { key: '赤', hex: '#8B0000' },
@@ -20,6 +21,35 @@ const ROAD_AURA_COLORS = [
 ];
 
 const SYMBOL_COLOR = { '👑': '#f4c95d', '☆': '#f4c95d', '◎': '#06c755', '○': '#8aa0ab', '△': '#8aa0ab', '×': '#e0563f' };
+
+// ---------- 基礎相性値の手動修正（パッチ）システム ----------
+// COMPATIBILITY_MATRIX の元データを退避し、ローカルストレージの差分(patchData)を重ねて適用する
+let ORIGINAL_MATRIX = JSON.parse(JSON.stringify(COMPATIBILITY_MATRIX));
+let patchData = {};
+function loadPatchData() {
+    try {
+        const raw = localStorage.getItem(LS_KEY_PATCH);
+        if (raw) patchData = JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+}
+function savePatchData() {
+    try { localStorage.setItem(LS_KEY_PATCH, JSON.stringify(patchData)); } catch (e) { /* ignore */ }
+}
+function applyPatchToMatrix() {
+    for (let i = 0; i < MONSTER_NAMES.length; i++) {
+        for (let j = 0; j < MONSTER_NAMES.length; j++) {
+            COMPATIBILITY_MATRIX[i][j] = ORIGINAL_MATRIX[i][j];
+        }
+    }
+    for (const key in patchData) {
+        const [c, p] = key.split('-').map(Number);
+        if (!Number.isNaN(c) && !Number.isNaN(p) && COMPATIBILITY_MATRIX[c]) {
+            COMPATIBILITY_MATRIX[c][p] += patchData[key];
+        }
+    }
+}
+loadPatchData();
+applyPatchToMatrix(); // ページ読み込み時点で全ての計算に修正値を反映
 
 // ---------- 計算ロジック（元ツールから移植） ----------
 function getComb(youngerIdx, olderIdx) {
@@ -141,12 +171,14 @@ function showQuickReplies(options) {
 }
 
 // =========================================================
-// モンスター選択トレイ
+// モンスター選択トレイ（キャンセル対応）
 // =========================================================
 const tray = document.getElementById('picker-tray');
 const trayOverlay = document.getElementById('tray-overlay');
 const trayBody = document.getElementById('tray-body');
 const trayTitle = document.getElementById('tray-title');
+
+let pendingTrayCancel = null; // トレイを閉じた（=選ばずに離脱した）ときに呼ばれるコールバック
 
 function openTray(title) {
     trayTitle.textContent = title;
@@ -157,9 +189,20 @@ function closeTray() {
     tray.classList.remove('show');
     trayOverlay.classList.remove('show');
 }
+// 「閉じる」ボタン・オーバーレイタップ用：閉じてキャンセル通知する
+function cancelTray() {
+    closeTray();
+    if (pendingTrayCancel) {
+        const cb = pendingTrayCancel;
+        pendingTrayCancel = null;
+        cb();
+    }
+}
 
-function pickMonsterViaTray(title) {
+// 生のトレイ選択（1体・キャンセルするとonCancelが呼ばれ、Promiseは解決しない＝呼び出し元でリトライ可能にする）
+function pickMonsterViaTrayRaw(title, onCancel) {
     return new Promise(resolve => {
+        pendingTrayCancel = onCancel;
         trayBody.innerHTML = '';
         const grid = document.createElement('div');
         grid.className = 'monster-grid';
@@ -167,11 +210,34 @@ function pickMonsterViaTray(title) {
             const cell = document.createElement('div');
             cell.className = 'monster-cell';
             cell.innerHTML = `<img src="${imgOf(idx)}" onerror="this.style.opacity=0"><span>${name}</span>`;
-            cell.onclick = () => { closeTray(); resolve(idx); };
+            cell.onclick = () => { pendingTrayCancel = null; closeTray(); resolve(idx); };
             grid.appendChild(cell);
         });
         trayBody.appendChild(grid);
         openTray(title);
+    });
+}
+
+// 「タップして選ぶ」ボタン付きの吹き出しを出し、押されたらトレイを開く。
+// トレイを選ばずに閉じた場合はボタンを再度押せる状態に戻す（詰まらないようにする）。
+function askAndPickMonster(questionHtml, trayTitle) {
+    return new Promise(resolve => {
+        botMessage(`${questionHtml}<div class="bubble-buttons"><button class="bubble-btn">👉 タップしてモンスターを選ぶ</button></div>`).then(row => {
+            const btn = row.querySelector('button');
+            const openFlow = () => {
+                btn.disabled = true;
+                btn.textContent = '選択中…（トレイを開いています）';
+                pickMonsterViaTrayRaw(trayTitle, () => {
+                    btn.disabled = false;
+                    btn.textContent = '👉 タップしてモンスターを選ぶ';
+                }).then(idx => {
+                    btn.disabled = true;
+                    btn.textContent = '✅ 選択済み';
+                    resolve(idx);
+                });
+            };
+            btn.onclick = openFlow;
+        });
     });
 }
 
@@ -303,8 +369,7 @@ async function runGiftMonsterSteps(prefill) {
             giftInput[step.key] = prefill[step.key];
             continue;
         }
-        await botMessage(step.q);
-        const idx = await pickMonsterViaTray(`${step.label}を選択`);
+        const idx = await askAndPickMonster(step.q, `${step.label}を選択`);
         giftInput[step.key] = idx;
         userMonsterCard(idx, step.label);
     }
@@ -473,8 +538,9 @@ function calculateItemsForScore(currentScore, targetScore) {
 }
 
 // ---- 汎用トレイ：モンスター1体選択（スキップ可） ----
-function pickMonsterOrSkip(title, poolFilter) {
+function pickMonsterOrSkipRaw(title, poolFilter, onCancel) {
     return new Promise(resolve => {
+        pendingTrayCancel = onCancel;
         const pool = poolFilter ? MONSTER_NAMES.map((_, i) => i).filter(poolFilter) : MONSTER_NAMES.map((_, i) => i);
         trayBody.innerHTML = `<div style="margin-bottom:8px;"><button class="chip-btn" id="skip-btn">この枠は指定しない（自動探索）</button></div><div class="monster-grid" id="pick-grid"></div>`;
         const grid = document.getElementById('pick-grid');
@@ -482,17 +548,40 @@ function pickMonsterOrSkip(title, poolFilter) {
             const cell = document.createElement('div');
             cell.className = 'monster-cell';
             cell.innerHTML = `<img src="${imgOf(idx)}" onerror="this.style.opacity=0"><span>${MONSTER_NAMES[idx]}</span>`;
-            cell.onclick = () => { closeTray(); resolve(idx); };
+            cell.onclick = () => { pendingTrayCancel = null; closeTray(); resolve(idx); };
             grid.appendChild(cell);
         });
-        document.getElementById('skip-btn').onclick = () => { closeTray(); resolve(null); };
+        document.getElementById('skip-btn').onclick = () => { pendingTrayCancel = null; closeTray(); resolve(null); };
         openTray(title);
     });
 }
 
-// ---- 汎用トレイ：除外モンスターの複数選択 ----
-function pickExclusionSet(title, initialSet) {
+// 質問文＋「タップして選ぶ／スキップ可」ボタンを出し、閉じても再挑戦できるようにするラッパー
+function askMonsterOrSkip(questionHtml, trayTitle, poolFilter) {
     return new Promise(resolve => {
+        botMessage(`${questionHtml}<div class="bubble-buttons"><button class="bubble-btn">👉 タップして選ぶ（スキップ可）</button></div>`).then(row => {
+            const btn = row.querySelector('button');
+            const openFlow = () => {
+                btn.disabled = true;
+                btn.textContent = '選択中…（トレイを開いています）';
+                pickMonsterOrSkipRaw(trayTitle, poolFilter, () => {
+                    btn.disabled = false;
+                    btn.textContent = '👉 タップして選ぶ（スキップ可）';
+                }).then(idx => {
+                    btn.disabled = true;
+                    btn.textContent = idx === null ? '✅ 指定しない（自動探索）' : '✅ 選択済み';
+                    resolve(idx);
+                });
+            };
+            btn.onclick = openFlow;
+        });
+    });
+}
+
+// ---- 汎用トレイ：除外モンスターの複数選択 ----
+function pickExclusionSetRaw(title, initialSet, onCancel) {
+    return new Promise(resolve => {
+        pendingTrayCancel = onCancel;
         const localSet = new Set(initialSet);
         function draw() {
             trayBody.innerHTML = `
@@ -511,16 +600,46 @@ function pickExclusionSet(title, initialSet) {
                 grid.appendChild(cell);
             });
             document.getElementById('ex-clear').onclick = () => { localSet.clear(); draw(); };
-            document.getElementById('ex-done').onclick = () => { closeTray(); resolve(localSet); };
+            document.getElementById('ex-done').onclick = () => { pendingTrayCancel = null; closeTray(); resolve(localSet); };
         }
         draw();
         openTray(title);
     });
 }
 
+// 質問文＋「タップして設定する」ボタンを出し、閉じても再挑戦できるようにするラッパー
+function askExclusionSet(questionHtml, trayTitle, initialSet) {
+    return new Promise(resolve => {
+        botMessage(`${questionHtml}<div class="bubble-buttons"><button class="bubble-btn">👉 タップして設定する</button></div>`).then(row => {
+            const btn = row.querySelector('button');
+            const openFlow = () => {
+                btn.disabled = true;
+                btn.textContent = '設定中…（トレイを開いています）';
+                pickExclusionSetRaw(trayTitle, initialSet, () => {
+                    btn.disabled = false;
+                    btn.textContent = '👉 タップして設定する';
+                }).then(set => {
+                    btn.disabled = true;
+                    btn.textContent = `✅ ${set.size}体を除外に設定`;
+                    resolve(set);
+                });
+            };
+            btn.onclick = openFlow;
+        });
+    });
+}
+
 function quickReplyPromise(options) {
     return new Promise(resolve => {
         showQuickReplies(options.map(o => ({ label: o.label, onClick: () => resolve(o.value) })));
+    });
+}
+// 質問文を送ってからクイックリプライを出す（読む時間を確保するためbotMessageの完了を待つ）
+function quickReplyPromise2(questionHtml, options) {
+    return new Promise(resolve => {
+        botMessage(questionHtml).then(() => {
+            showQuickReplies(options.map(o => ({ label: o.label, onClick: () => resolve(o.value) })));
+        });
     });
 }
 
@@ -655,8 +774,7 @@ async function startComplementFlow() {
 }
 
 async function pickChildMonster() {
-    await botMessage('まず、育成したいモンスター（子）を選んでください👇');
-    const idx = await pickMonsterViaTray('育成モンスター（子）を選択');
+    const idx = await askAndPickMonster('まず、育成したいモンスター（子）を選んでください👇', '育成モンスター（子）を選択');
     userMonsterCard(idx, '育成モンスター（子）');
     return idx;
 }
@@ -671,33 +789,21 @@ async function runTotalPowerFlow() {
     await botMessage('了解です、総合力重視の補完探索ですね。');
     const child = await pickChildMonster();
 
-    await botMessage('除外したいモンスターはいますか？（父親側・母親側で共通の除外リストです）');
     let excluded = new Set();
-    const exAns = await quickReplyPromise([{ label: '設定する', value: true }, { label: '設定しない', value: false }]);
+    const exAns = await quickReplyPromise2('除外したいモンスターはいますか？（父親側・母親側で共通の除外リストです）', [{ label: '設定する', value: true }, { label: '設定しない', value: false }]);
     if (exAns) {
-        await botMessage('除外するモンスターをタップして選んでください👇');
-        excluded = await pickExclusionSet('除外モンスターを選択', excluded);
-        userMessage(`除外モンスター：<b>${excluded.size}体</b>`);
-    } else {
-        userMessage('除外しない');
+        excluded = await askExclusionSet('除外するモンスターをタップして選んでください👇', '除外モンスターを選択', excluded);
     }
 
-    await botMessage('親・祖父母の中で「この子は固定したい」という枠はありますか？（指定しない枠は自動で探索します）');
     let fatherFixed = { f: null, ff: null, fm: null };
     let motherFixed = { m: null, mf: null, mm: null };
-    const fixAns = await quickReplyPromise([{ label: '指定する', value: true }, { label: '指定しない（全自動探索）', value: false }]);
+    const fixAns = await quickReplyPromise2('親・祖父母の中で「この子は固定したい」という枠はありますか？（指定しない枠は自動で探索します）', [{ label: '指定する', value: true }, { label: '指定しない（全自動探索）', value: false }]);
     if (fixAns) {
         for (const [key, label] of [['f', '父親'], ['ff', '父方の祖父'], ['fm', '父方の祖母']]) {
-            await botMessage(`【${label}】を固定しますか？`);
-            const idx = await pickMonsterOrSkip(`${label}を選択（任意）`);
-            fatherFixed[key] = idx;
-            if (idx !== null) userMonsterCard(idx, label); else userMessage(`${label}：指定しない`);
+            fatherFixed[key] = await askMonsterOrSkip(`【${label}】を固定しますか？`, `${label}を選択（任意）`);
         }
         for (const [key, label] of [['m', '母親'], ['mf', '母方の祖父'], ['mm', '母方の祖母']]) {
-            await botMessage(`【${label}】を固定しますか？`);
-            const idx = await pickMonsterOrSkip(`${label}を選択（任意）`);
-            motherFixed[key] = idx;
-            if (idx !== null) userMonsterCard(idx, label); else userMessage(`${label}：指定しない`);
+            motherFixed[key] = await askMonsterOrSkip(`【${label}】を固定しますか？`, `${label}を選択（任意）`);
         }
     }
 
@@ -740,8 +846,7 @@ async function runBattleFlow() {
         targetColor = trueColors[0];
         await botMessage(`このモンスターの血統は【${targetColor}】オーラです。狙うオーラ色を${targetColor}に設定しました。`);
     } else {
-        await botMessage(`このモンスターの血統は複数のオーラ色（${trueColors.join('・')}）を持っています。今回狙うオーラ色を選んでください。`);
-        targetColor = await quickReplyPromise(trueColors.map(c => ({ label: c, value: c })));
+        targetColor = await quickReplyPromise2(`このモンスターの血統は複数のオーラ色（${trueColors.join('・')}）を持っています。今回狙うオーラ色を選んでください。`, trueColors.map(c => ({ label: c, value: c })));
     }
 
     let eligibleColors = null; // null = 制限なし
@@ -760,44 +865,33 @@ async function runBattleFlow() {
         }
     }
 
-    await botMessage('ここからは【父親側】の入力です。父親・父方祖父・父方祖母の中で固定したい枠はありますか？（指定しない枠は自動で探索します。オーラ色の制限は自動探索の枠のみに適用され、固定した枠はそのまま使われます）');
+    await botMessage('ここからは【父親側】の入力です（オーラ色の制限は自動探索の枠のみに適用され、固定した枠はそのまま使われます）。');
     let fatherFixed = { f: null, ff: null, fm: null };
     for (const [key, label] of [['f', '父親'], ['ff', '父方の祖父'], ['fm', '父方の祖母']]) {
-        await botMessage(`【${label}】を固定しますか？`);
-        const idx = await pickMonsterOrSkip(`${label}を選択（任意）`);
-        fatherFixed[key] = idx;
-        if (idx !== null) userMonsterCard(idx, label); else userMessage(`${label}：指定しない`);
+        fatherFixed[key] = await askMonsterOrSkip(`【${label}】を固定しますか？`, `${label}を選択（任意）`);
     }
 
-    await botMessage('父親側で除外したいモンスターはいますか？');
     let excludedFather = new Set();
-    const exFAns = await quickReplyPromise([{ label: '設定する', value: true }, { label: '設定しない', value: false }]);
+    const exFAns = await quickReplyPromise2('父親側で除外したいモンスターはいますか？', [{ label: '設定する', value: true }, { label: '設定しない', value: false }]);
     if (exFAns) {
-        excludedFather = await pickExclusionSet('父親側の除外モンスターを選択', excludedFather);
-        userMessage(`父親側 除外モンスター：<b>${excludedFather.size}体</b>`);
-    } else { userMessage('除外しない'); }
+        excludedFather = await askExclusionSet('父親側で除外するモンスターをタップして選んでください👇', '父親側の除外モンスターを選択', excludedFather);
+    }
 
-    await botMessage('続いて【母親側】の入力です（ノーブル秘伝担当・今回はオーラの自動連携はまだ行いません）。母親・母方祖父・母方祖母の中で固定したい枠はありますか？');
+    await botMessage('続いて【母親側】の入力です（ノーブル秘伝担当・今回はオーラの自動連携はまだ行いません）。');
     let motherFixed = { m: null, mf: null, mm: null };
     for (const [key, label] of [['m', '母親'], ['mf', '母方の祖父'], ['mm', '母方の祖母']]) {
-        await botMessage(`【${label}】を固定しますか？`);
-        const idx = await pickMonsterOrSkip(`${label}を選択（任意）`);
-        motherFixed[key] = idx;
-        if (idx !== null) userMonsterCard(idx, label); else userMessage(`${label}：指定しない`);
+        motherFixed[key] = await askMonsterOrSkip(`【${label}】を固定しますか？`, `${label}を選択（任意）`);
     }
 
-    await botMessage('母親側で除外したいモンスターはいますか？');
     let excludedMother = new Set();
-    const exMAns = await quickReplyPromise([{ label: '設定する', value: true }, { label: '設定しない', value: false }]);
+    const exMAns = await quickReplyPromise2('母親側で除外したいモンスターはいますか？', [{ label: '設定する', value: true }, { label: '設定しない', value: false }]);
     if (exMAns) {
-        excludedMother = await pickExclusionSet('母親側の除外モンスターを選択', excludedMother);
-        userMessage(`母親側 除外モンスター：<b>${excludedMother.size}体</b>`);
-    } else { userMessage('除外しない'); }
+        excludedMother = await askExclusionSet('母親側で除外するモンスターをタップして選んでください👇', '母親側の除外モンスターを選択', excludedMother);
+    }
 
     const targetSymbol = await askTargetSymbol();
 
-    await botMessage('入力内容を確認しました。この内容で計算しますか？');
-    const action = await quickReplyPromise([
+    const action = await quickReplyPromise2('入力内容を確認しました。この内容で計算しますか？', [
         { label: '✅ 計算する', value: 'calc' },
         { label: '🔄 父親側⇔母親側の入力を入れ替えて計算', value: 'swap' },
     ]);
@@ -959,6 +1053,74 @@ function bloodlineCheckAll(value) {
     renderBloodlineTable();
 }
 
+// ---- 基礎相性値マトリクスの表示・編集 ----
+function renderMatrixTable() {
+    const container = document.getElementById('matrix-table-wrap');
+    let html = '<div class="matrix-scroll"><table class="matrix-table"><thead><tr><th class="corner">子＼親</th>';
+    MONSTER_NAMES.forEach(name => { html += `<th><img src="${imgOfName(name)}" title="${name}" onerror="this.style.display='none'"></th>`; });
+    html += '</tr></thead><tbody>';
+    MONSTER_NAMES.forEach((childName, cIdx) => {
+        html += `<tr><th><img src="${imgOfName(childName)}" title="${childName}" onerror="this.style.display='none'"></th>`;
+        MONSTER_NAMES.forEach((parentName, pIdx) => {
+            const val = COMPATIBILITY_MATRIX[cIdx][pIdx];
+            const patched = patchData[`${cIdx}-${pIdx}`] !== undefined;
+            html += `<td class="matrix-cell${patched ? ' patched' : ''}" data-c="${cIdx}" data-p="${pIdx}">${val}</td>`;
+        });
+        html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+    container.querySelectorAll('.matrix-cell').forEach(td => {
+        td.onclick = () => openMatrixEditTray(Number(td.dataset.c), Number(td.dataset.p));
+    });
+}
+
+function openMatrixEditTray(c, p) {
+    pendingTrayCancel = null; // 設定パネルからの編集はチャットフローのキャンセル通知と無関係
+    const key = `${c}-${p}`;
+    const currentVal = COMPATIBILITY_MATRIX[c][p];
+    const baseVal = ORIGINAL_MATRIX[c][p];
+    trayBody.innerHTML = `
+        <div style="display:flex; justify-content:center; gap:16px; align-items:center; margin-bottom:10px;">
+            <div style="text-align:center;"><img src="${imgOfName(MONSTER_NAMES[c])}" style="width:42px;height:42px;" onerror="this.style.display='none'"><div style="font-size:0.7rem;">${MONSTER_NAMES[c]}（子）</div></div>
+            <div style="font-size:1.2rem; color:var(--muted);">×</div>
+            <div style="text-align:center;"><img src="${imgOfName(MONSTER_NAMES[p])}" style="width:42px;height:42px;" onerror="this.style.display='none'"><div style="font-size:0.7rem;">${MONSTER_NAMES[p]}（親）</div></div>
+        </div>
+        <div style="text-align:center; margin-bottom:8px; font-size:0.78rem; color:var(--muted);">基準値：${baseVal}</div>
+        <div class="slider-row" style="justify-content:center; margin-bottom:14px;">
+            <button class="adj-btn" id="mx-minus">−</button>
+            <input type="number" id="mx-input" value="${currentVal}" style="width:90px; text-align:center; font-size:1.15rem; background:#10202b; color:#fff; border:1px solid var(--border); border-radius:8px; padding:8px;">
+            <button class="adj-btn" id="mx-plus">＋</button>
+        </div>
+        <div class="bubble-buttons" style="justify-content:center;">
+            <button class="chip-btn" id="mx-reset">基準値に戻す</button>
+            <button class="bubble-btn" id="mx-save">この値で保存</button>
+        </div>
+    `;
+    const input = document.getElementById('mx-input');
+    document.getElementById('mx-minus').onclick = () => { input.value = Number(input.value) - 1; };
+    document.getElementById('mx-plus').onclick = () => { input.value = Number(input.value) + 1; };
+    document.getElementById('mx-reset').onclick = () => { input.value = baseVal; };
+    document.getElementById('mx-save').onclick = () => {
+        const newVal = Number(input.value);
+        const diff = newVal - baseVal;
+        if (diff === 0) { delete patchData[key]; } else { patchData[key] = diff; }
+        COMPATIBILITY_MATRIX[c][p] = newVal;
+        savePatchData();
+        closeTray();
+        renderMatrixTable();
+    };
+    openTray('基礎相性値を編集');
+}
+
+function resetAllPatches() {
+    if (!confirm('相性値の修正内容をすべてリセットします。よろしいですか？')) return;
+    patchData = {};
+    applyPatchToMatrix();
+    savePatchData();
+    renderMatrixTable();
+}
+
 // ---- 所持ロード秘伝オーラ（赤青黄緑白黒／詳細探索で使用予定） ----
 function loadOwnedAura() {
     try {
@@ -995,11 +1157,14 @@ function renderOwnedAuraTab() {
 function switchSettingsTab(tab) {
     document.getElementById('stab-bloodline').classList.toggle('active', tab === 'bloodline');
     document.getElementById('stab-owned-aura').classList.toggle('active', tab === 'owned-aura');
+    document.getElementById('stab-matrix').classList.toggle('active', tab === 'matrix');
     document.getElementById('stab-about').classList.toggle('active', tab === 'about');
     document.getElementById('settings-view-bloodline').style.display = tab === 'bloodline' ? 'block' : 'none';
     document.getElementById('settings-view-owned-aura').style.display = tab === 'owned-aura' ? 'block' : 'none';
+    document.getElementById('settings-view-matrix').style.display = tab === 'matrix' ? 'block' : 'none';
     document.getElementById('settings-view-about').style.display = tab === 'about' ? 'block' : 'none';
     if (tab === 'owned-aura') renderOwnedAuraTab();
+    if (tab === 'matrix') renderMatrixTable();
 }
 
 function openSettingsPanel() {
@@ -1013,21 +1178,32 @@ function closeSettingsPanel() {
 }
 
 function resetAllData() {
-    if (!confirm('保存されている入力データと血統データをすべて削除します。よろしいですか？')) return;
+    if (!confirm('保存されている入力データ・血統データ・相性値の修正内容をすべて削除します。よろしいですか？')) return;
     localStorage.removeItem(LS_KEY_GIFT_INPUT);
     localStorage.removeItem(LS_KEY_BLOODLINE);
     localStorage.removeItem(LS_KEY_OWNED_AURA);
+    localStorage.removeItem(LS_KEY_PATCH);
     bloodlineData = JSON.parse(JSON.stringify(DEFAULT_BLOODLINE_DATA));
     ownedAuraData = loadOwnedAura();
+    patchData = {};
+    applyPatchToMatrix();
     renderBloodlineTable();
     renderOwnedAuraTab();
+    renderMatrixTable();
     alert('削除しました。');
 }
 
 // =========================================================
 // 初期化
 // =========================================================
+async function showWelcomeMessage() {
+    document.getElementById('header-title').textContent = 'ギフトンBot';
+    document.getElementById('header-bot-avatar').textContent = '🤖';
+    document.getElementById('header-subtitle').textContent = 'モードを選んでください';
+    await botMessage('はじめまして、LMFギフトンツールのBotです🎉<br>モンスターの相性計算や配合候補の探索をお手伝いします。');
+    await botMessage('下のナビゲーションバーから使いたいモードを選んでください👇<br>🎁 Gift/Tyrant：親を指定して育成候補モンスターを計算<br>🧩 補完探索：育成したいモンスターから足りない親を自動探索');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-    setHeader('gift');
-    maybeOfferRestore();
+    showWelcomeMessage();
 });

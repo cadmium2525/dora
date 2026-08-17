@@ -462,6 +462,45 @@ body {
 .aura-state { font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
 .aura-toggle.on .aura-state { color: var(--accent); }
 
+/* 基礎相性値マトリクス */
+.matrix-scroll {
+    overflow: auto;
+    max-height: 55vh;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    -webkit-overflow-scrolling: touch;
+}
+.matrix-table {
+    border-collapse: collapse;
+    font-size: 0.6rem;
+}
+.matrix-table th, .matrix-table td {
+    border: 1px solid var(--border);
+    padding: 2px;
+    text-align: center;
+    min-width: 26px;
+    color: var(--bot-bubble-text);
+}
+.matrix-table th img { width: 16px; height: 16px; display: block; margin: 0 auto; }
+.matrix-table thead th {
+    position: sticky; top: 0;
+    background: var(--header-bg);
+    z-index: 2;
+}
+.matrix-table thead th.corner {
+    position: sticky; left: 0; top: 0;
+    z-index: 4;
+    font-size: 0.55rem;
+}
+.matrix-table tbody th {
+    position: sticky; left: 0;
+    background: var(--header-bg);
+    z-index: 1;
+}
+.matrix-cell { cursor: pointer; background: #10202b; }
+.matrix-cell:active { background: var(--accent-soft); }
+.matrix-cell.patched { outline: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+
 /* ---------- Bottom Menu ---------- */
 .bottom-menu {
     flex: 0 0 auto;

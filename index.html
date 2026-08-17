@@ -40,11 +40,11 @@
         <div class="tray-handle"></div>
         <div class="tray-header">
             <span id="tray-title">モンスターを選択</span>
-            <button class="tray-close" onclick="closeTray()">閉じる</button>
+            <button class="tray-close" onclick="cancelTray()">閉じる</button>
         </div>
         <div id="tray-body" class="tray-body"></div>
     </div>
-    <div id="tray-overlay" class="tray-overlay" onclick="closeTray()"></div>
+    <div id="tray-overlay" class="tray-overlay" onclick="cancelTray()"></div>
 
     <!-- 詳細結果パネル -->
     <div id="detail-panel" class="detail-panel">
@@ -66,6 +66,7 @@
             <div class="settings-tabs">
                 <div id="stab-bloodline" class="settings-tab active" onclick="switchSettingsTab('bloodline')">血統データ（モンスター別）</div>
                 <div id="stab-owned-aura" class="settings-tab" onclick="switchSettingsTab('owned-aura')">所持ロード秘伝オーラ</div>
+                <div id="stab-matrix" class="settings-tab" onclick="switchSettingsTab('matrix')">基礎相性値</div>
                 <div id="stab-about" class="settings-tab" onclick="switchSettingsTab('about')">このツールについて</div>
             </div>
             <div id="settings-view-bloodline" class="settings-view">
@@ -80,6 +81,13 @@
                 <p class="settings-help">あなたが<b>所持しているロード秘伝オーラ</b>（赤・青・黄・緑・白・黒）にチェックしてください。<br>詳細探索機能で使用する予定です。</p>
                 <div id="owned-aura-grid" class="owned-aura-grid"></div>
             </div>
+            <div id="settings-view-matrix" class="settings-view" style="display:none;">
+                <p class="settings-help">モンスター間の<b>基礎相性値</b>を手動で修正できます。セルをタップすると編集画面が開きます。修正した値はこの端末に保存され、全ての計算（Gift/Tyrant・補完探索）に反映されます。</p>
+                <div class="bloodline-actions">
+                    <button class="chip-btn danger" onclick="resetAllPatches()">修正内容を全てリセット</button>
+                </div>
+                <div id="matrix-table-wrap"></div>
+            </div>
             <div id="settings-view-about" class="settings-view" style="display:none;">
                 <p class="settings-help">LMFギフトンツール チャット版。<br>入力内容と血統データはこの端末のローカルストレージに保存され、外部には送信されません。</p>
                 <button class="chip-btn danger" onclick="resetAllData()">保存データをすべて削除</button>
@@ -90,7 +98,7 @@
 
     <!-- 下部メニュー（LINEのリッチメニュー相当） -->
     <nav id="bottom-menu" class="bottom-menu">
-        <button class="menu-item active" data-feature="gift" onclick="selectFeature('gift')">
+        <button class="menu-item" data-feature="gift" onclick="selectFeature('gift')">
             <span class="menu-icon">🎁</span><span>Gift/Tyrant</span>
         </button>
         <button class="menu-item" data-feature="reverse" onclick="selectFeature('reverse')">
