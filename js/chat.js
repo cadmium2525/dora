@@ -537,45 +537,45 @@ function calculateItemsForScore(currentScore, targetScore) {
     return { s3: n3, s2: n2, noble: nn, totalScore: currentScore + (n3 * 12.5) + (n2 * 5) + nn };
 }
 
-// ---- 汎用トレイ：モンスター1体選択（スキップ可） ----
-function pickMonsterOrSkipRaw(title, poolFilter, onCancel) {
+// 質問文＋「タップして選ぶ」「スキップ（探索対象にする）」の2ボタンを出す。
+// 閉じても再挑戦できるようにする（詰まらない設計）
+function askMonsterOrSkip(questionHtml, trayTitle) {
     return new Promise(resolve => {
-        pendingTrayCancel = onCancel;
-        const pool = poolFilter ? MONSTER_NAMES.map((_, i) => i).filter(poolFilter) : MONSTER_NAMES.map((_, i) => i);
-        trayBody.innerHTML = `<div style="margin-bottom:8px;"><button class="chip-btn" id="skip-btn">この枠は指定しない（自動探索）</button></div><div class="monster-grid" id="pick-grid"></div>`;
-        const grid = document.getElementById('pick-grid');
-        pool.forEach(idx => {
-            const cell = document.createElement('div');
-            cell.className = 'monster-cell';
-            cell.innerHTML = `<img src="${imgOf(idx)}" onerror="this.style.opacity=0"><span>${MONSTER_NAMES[idx]}</span>`;
-            cell.onclick = () => { pendingTrayCancel = null; closeTray(); resolve(idx); };
-            grid.appendChild(cell);
-        });
-        document.getElementById('skip-btn').onclick = () => { pendingTrayCancel = null; closeTray(); resolve(null); };
-        openTray(title);
-    });
-}
-
-// 質問文＋「タップして選ぶ／スキップ可」ボタンを出し、閉じても再挑戦できるようにするラッパー
-function askMonsterOrSkip(questionHtml, trayTitle, poolFilter) {
-    return new Promise(resolve => {
-        botMessage(`${questionHtml}<div class="bubble-buttons"><button class="bubble-btn">👉 タップして選ぶ（スキップ可）</button></div>`).then(row => {
-            const btn = row.querySelector('button');
-            const openFlow = () => {
-                btn.disabled = true;
-                btn.textContent = '選択中…（トレイを開いています）';
-                pickMonsterOrSkipRaw(trayTitle, poolFilter, () => {
-                    btn.disabled = false;
-                    btn.textContent = '👉 タップして選ぶ（スキップ可）';
+        botMessage(`${questionHtml}<div class="bubble-buttons">
+            <button class="bubble-btn" id="pick-btn">👉 タップして選ぶ</button>
+            <button class="bubble-btn secondary" id="skip-btn">⏭ スキップ（探索対象にする）</button>
+        </div>`).then(row => {
+            const pickBtn = row.querySelector('#pick-btn');
+            const skipBtn = row.querySelector('#skip-btn');
+            pickBtn.onclick = () => {
+                pickBtn.disabled = true; skipBtn.disabled = true;
+                pickBtn.textContent = '選択中…（トレイを開いています）';
+                pickMonsterViaTrayRaw(trayTitle, () => {
+                    pickBtn.disabled = false; skipBtn.disabled = false;
+                    pickBtn.textContent = '👉 タップして選ぶ';
                 }).then(idx => {
-                    btn.disabled = true;
-                    btn.textContent = idx === null ? '✅ 指定しない（自動探索）' : '✅ 選択済み';
+                    pickBtn.disabled = true; skipBtn.disabled = true;
+                    pickBtn.textContent = '✅ 選択済み';
+                    skipBtn.style.display = 'none';
                     resolve(idx);
                 });
             };
-            btn.onclick = openFlow;
+            skipBtn.onclick = () => {
+                pickBtn.disabled = true; skipBtn.disabled = true;
+                skipBtn.textContent = '✅ 指定しない（自動探索）';
+                pickBtn.style.display = 'none';
+                resolve(null);
+            };
         });
     });
+}
+
+// ノーブル判定（血統データにノーブル項目があればそれを優先、無ければNOBLE_MONSTER_NAMESにフォールバック）
+function isNobleMonster(idx) {
+    const name = MONSTER_NAMES[idx];
+    const data = bloodlineData[name];
+    if (data && typeof data['ノーブル'] !== 'undefined') return data['ノーブル'] === true;
+    return NOBLE_MONSTER_NAMES.includes(name);
 }
 
 // ---- 汎用トレイ：除外モンスターの複数選択 ----
@@ -587,6 +587,7 @@ function pickExclusionSetRaw(title, initialSet, onCancel) {
             trayBody.innerHTML = `
                 <div style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
                     <button class="chip-btn" id="ex-clear">全解除</button>
+                    <button class="chip-btn" id="ex-nonnoble">ノーブル以外を一括除外</button>
                     <button class="chip-btn" id="ex-done">この内容で決定（${localSet.size}体除外中）</button>
                 </div>
                 <div class="monster-grid" id="ex-grid"></div>
@@ -600,6 +601,11 @@ function pickExclusionSetRaw(title, initialSet, onCancel) {
                 grid.appendChild(cell);
             });
             document.getElementById('ex-clear').onclick = () => { localSet.clear(); draw(); };
+            document.getElementById('ex-nonnoble').onclick = () => {
+                localSet.clear();
+                MONSTER_NAMES.forEach((name, idx) => { if (!isNobleMonster(idx)) localSet.add(idx); });
+                draw();
+            };
             document.getElementById('ex-done').onclick = () => { pendingTrayCancel = null; closeTray(); resolve(localSet); };
         }
         draw();
@@ -688,6 +694,43 @@ function poolByColor(color, excludedSet) {
 }
 
 // ---- 結果表示 ----
+function excludedIconsHTML(excludedSet) {
+    if (!excludedSet || excludedSet.size === 0) return `<span style="font-size:0.7rem; color:var(--muted);">除外なし</span>`;
+    return `<div style="display:flex; flex-wrap:wrap; gap:3px; margin-top:2px;">${[...excludedSet].map(i => `<img src="${imgOf(i)}" title="${MONSTER_NAMES[i]}" style="width:20px;height:20px;border-radius:4px;" onerror="this.style.display='none'">`).join('')}</div>`;
+}
+
+function fixedSlotChip(idx, label) {
+    if (idx === null || idx === undefined) {
+        return `<span style="background:#10202b; border:1px solid var(--border); font-size:0.68rem; padding:3px 7px; border-radius:8px; color:var(--muted);">${label}：未指定（自動探索）</span>`;
+    }
+    return `<span style="background:var(--accent-soft); border:1px solid var(--accent); font-size:0.68rem; padding:3px 7px; border-radius:8px; color:var(--accent);">${label}：${MONSTER_NAMES[idx]}</span>`;
+}
+
+function confirmSummaryHTML(state) {
+    const { mode, child, targetColor, fatherSet, motherSet, excludedFather, excludedMother, targetSymbol } = state;
+    const symbolOpt = TARGET_SYMBOL_OPTIONS.find(o => o.value === targetSymbol);
+    const symbolLabel = symbolOpt ? symbolOpt.label : '指定なし';
+    let html = `<div style="font-weight:700; margin-bottom:8px;">入力内容の確認</div>`;
+    html += `<div class="bubble-card" style="margin-bottom:10px;"><img src="${imgOf(child)}" onerror="this.style.display='none'"><div><div class="cc-label">育成モンスター${mode === 'battle' ? `／狙うオーラ：${targetColor}` : ''}</div><div class="cc-name">${MONSTER_NAMES[child]}</div></div></div>`;
+
+    html += `<div style="font-size:0.72rem; color:var(--muted); margin-bottom:4px;">${mode === 'battle' ? '父親側（ロード秘伝オーラ担当）' : '父親側'}</div>`;
+    html += `<div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:6px;">${fixedSlotChip(fatherSet.p, '父')}${fixedSlotChip(fatherSet.gp1, '祖父')}${fixedSlotChip(fatherSet.gp2, '祖母')}</div>`;
+    if (mode === 'battle') {
+        html += `<div style="font-size:0.68rem; color:var(--muted); margin-bottom:10px;">除外モンスター：${excludedIconsHTML(excludedFather)}</div>`;
+    }
+
+    html += `<div style="font-size:0.72rem; color:var(--muted); margin-bottom:4px;">${mode === 'battle' ? '母親側（ノーブル秘伝担当）' : '母親側'}</div>`;
+    html += `<div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:6px;">${fixedSlotChip(motherSet.p, '母')}${fixedSlotChip(motherSet.gp1, '祖父')}${fixedSlotChip(motherSet.gp2, '祖母')}</div>`;
+    if (mode === 'battle') {
+        html += `<div style="font-size:0.68rem; color:var(--muted); margin-bottom:10px;">除外モンスター：${excludedIconsHTML(excludedMother)}</div>`;
+    } else {
+        html += `<div style="font-size:0.68rem; color:var(--muted); margin-bottom:10px;">除外モンスター（共通）：${excludedIconsHTML(excludedFather)}</div>`;
+    }
+
+    html += `<div style="font-size:0.78rem;">目標相性シンボル：<b>${symbolLabel}</b></div>`;
+    return html;
+}
+
 function comboCardHTML(combo, rank, targetSymbol) {
     const itemRes = calculateItemsForScore(combo.rawScore, targetSymbol);
     const finalScore = itemRes.totalScore;
@@ -720,6 +763,7 @@ function comboCardHTML(combo, rank, targetSymbol) {
                     </div>
                 </div>
                 ${itemsNote}
+                <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn" data-idx="${rank - 1}">🎁 この組み合わせでGift/Tyrantを使う</button></div>
             </div>
         </div>
     `;
@@ -734,8 +778,20 @@ function openComboDetailPanel(combos, targetSymbol, childId) {
             ${combos.map((c, i) => comboCardHTML(c, i + 1, targetSymbol)).join('')}
         </div>
     `;
+    body.querySelectorAll('.mx-gift-btn').forEach(btn => {
+        btn.onclick = () => applyComboToGift(combos[Number(btn.dataset.idx)], targetSymbol);
+    });
     document.getElementById('detail-panel').classList.add('show');
     document.getElementById('detail-overlay').classList.add('show');
+}
+
+async function applyComboToGift(combo, targetSymbol) {
+    const itemRes = calculateItemsForScore(combo.rawScore, targetSymbol);
+    const data = { f: combo.f, ff: combo.ff, fm: combo.fm, m: combo.m, mf: combo.mf, mm: combo.mm, s3: itemRes.s3, s2: itemRes.s2, noble: itemRes.noble };
+    closeAnySubView();
+    setHeader('gift');
+    sysNote('補完探索の候補をGift/Tyrantに反映しました');
+    await startGiftFlow({ mode: 'restore', data });
 }
 
 function comboSummaryHTML(combos, targetSymbol) {
@@ -749,6 +805,19 @@ function comboSummaryHTML(combos, targetSymbol) {
         </div>`;
     }).join('');
     return `<div style="font-weight:700; margin-bottom:4px;">計算結果（上位3組）</div><div class="result-summary-list">${rows}</div>`;
+}
+
+// ---- 探索コア（stateから候補を計算） ----
+function computeCombos(state) {
+    const { child, fatherSet, motherSet, excludedFather, excludedMother, eligibleColors } = state;
+    let pUnits;
+    if (eligibleColors) {
+        pUnits = eligibleColors.flatMap(color => computeUnitCandidates(child, fatherSet.p, fatherSet.gp1, fatherSet.gp2, poolByColor(color, excludedFather)));
+    } else {
+        pUnits = computeUnitCandidates(child, fatherSet.p, fatherSet.gp1, fatherSet.gp2, poolExcluding(excludedFather));
+    }
+    const mUnits = computeUnitCandidates(child, motherSet.p, motherSet.gp1, motherSet.gp2, poolExcluding(excludedMother));
+    return combineUnits(child, pUnits, mUnits).slice(0, 10);
 }
 
 // ---- メインフロー ----
@@ -795,81 +864,49 @@ async function runTotalPowerFlow() {
         excluded = await askExclusionSet('除外するモンスターをタップして選んでください👇', '除外モンスターを選択', excluded);
     }
 
-    let fatherFixed = { f: null, ff: null, fm: null };
-    let motherFixed = { m: null, mf: null, mm: null };
+    let fatherSet = { p: null, gp1: null, gp2: null };
+    let motherSet = { p: null, gp1: null, gp2: null };
     const fixAns = await quickReplyPromise2('親・祖父母の中で「この子は固定したい」という枠はありますか？（指定しない枠は自動で探索します）', [{ label: '指定する', value: true }, { label: '指定しない（全自動探索）', value: false }]);
     if (fixAns) {
-        for (const [key, label] of [['f', '父親'], ['ff', '父方の祖父'], ['fm', '父方の祖母']]) {
-            fatherFixed[key] = await askMonsterOrSkip(`【${label}】を固定しますか？`, `${label}を選択（任意）`);
-        }
-        for (const [key, label] of [['m', '母親'], ['mf', '母方の祖父'], ['mm', '母方の祖母']]) {
-            motherFixed[key] = await askMonsterOrSkip(`【${label}】を固定しますか？`, `${label}を選択（任意）`);
-        }
+        fatherSet.p = await askMonsterOrSkip('【父親】を固定しますか？', '父親を選択（任意）');
+        fatherSet.gp1 = await askMonsterOrSkip('【父方の祖父】を固定しますか？', '父方の祖父を選択（任意）');
+        fatherSet.gp2 = await askMonsterOrSkip('【父方の祖母】を固定しますか？', '父方の祖母を選択（任意）');
+        motherSet.p = await askMonsterOrSkip('【母親】を固定しますか？', '母親を選択（任意）');
+        motherSet.gp1 = await askMonsterOrSkip('【母方の祖父】を固定しますか？', '母方の祖父を選択（任意）');
+        motherSet.gp2 = await askMonsterOrSkip('【母方の祖母】を固定しますか？', '母方の祖母を選択（任意）');
     }
 
     const targetSymbol = await askTargetSymbol();
 
-    await botMessage('入力内容を確認しました。この内容で計算しますか？');
-    const action = await quickReplyPromise([
-        { label: '✅ 計算する', value: 'calc' },
-        { label: '🔄 父親側⇔母親側を入れ替えて計算', value: 'swap' },
-    ]);
-    if (action === 'swap') { [fatherFixed, motherFixed] = [motherFixed, fatherFixed]; }
-
-    await botMessage('計算しています…🔮');
-    const pool = poolExcluding(excluded);
-    const pUnits = computeUnitCandidates(child, fatherFixed.f, fatherFixed.ff, fatherFixed.fm, pool);
-    const mUnits = computeUnitCandidates(child, motherFixed.m, motherFixed.mf, motherFixed.mm, pool);
-    const combos = combineUnits(child, pUnits, mUnits).slice(0, 10);
-
-    if (combos.length === 0) {
-        await botMessage('条件に合う組み合わせが見つかりませんでした。除外設定を見直してみてください。');
-    } else {
-        await botMessage(comboSummaryHTML(combos, targetSymbol));
-        appendDetailButton(() => openComboDetailPanel(combos, targetSymbol, child));
-    }
-    afterComplementMenu();
+    const state = { mode: 'total', child, targetColor: null, eligibleColors: null, fatherSet, motherSet, excludedFather: excluded, excludedMother: excluded, targetSymbol };
+    await confirmAndCompute(state);
 }
 
 async function runBattleFlow() {
     await botMessage('バトル用育成ですね⚔️<br>父親側が「ロード秘伝オーラ」担当、母親側が「ノーブル秘伝」担当という前提で進めます。');
     const child = await pickChildMonster();
 
-    const childName = MONSTER_NAMES[child];
-    const childData = bloodlineData[childName] || {};
-    const trueColors = ROAD_COLORS_ONLY.filter(c => childData[c]);
-
-    let targetColor = null;
-    if (trueColors.length === 0) {
-        await botMessage('このモンスターの血統にはロード秘伝オーラの設定がありませんでした。今回はオーラ制限なしで探索します。');
-    } else if (trueColors.length === 1) {
-        targetColor = trueColors[0];
-        await botMessage(`このモンスターの血統は【${targetColor}】オーラです。狙うオーラ色を${targetColor}に設定しました。`);
-    } else {
-        targetColor = await quickReplyPromise2(`このモンスターの血統は複数のオーラ色（${trueColors.join('・')}）を持っています。今回狙うオーラ色を選んでください。`, trueColors.map(c => ({ label: c, value: c })));
-    }
+    const targetColor = await quickReplyPromise2('今回狙うオーラ色を選んでください。', ROAD_COLORS_ONLY.map(c => ({ label: c, value: c })));
 
     let eligibleColors = null; // null = 制限なし
-    if (targetColor) {
-        if (ownedAuraData[targetColor]) {
-            eligibleColors = [targetColor];
-            await botMessage(`【${targetColor}】のロード秘伝オーラを所持しています。父親側の探索対象を${targetColor}系の血統に限定します。`);
+    if (ownedAuraData[targetColor]) {
+        eligibleColors = [targetColor];
+        await botMessage(`【${targetColor}】のロード秘伝オーラを所持しています。父親側の探索対象を${targetColor}系の血統に限定します。`);
+    } else {
+        const owned = ROAD_COLORS_ONLY.filter(c => ownedAuraData[c]);
+        if (owned.length === 0) {
+            await botMessage(`【${targetColor}】のロード秘伝オーラを未所持で、他に所持しているオーラもありませんでした。今回はオーラ制限なしで探索します。<br>（⚙️データ管理から所持オーラを登録しておくと、次回から自動で絞り込めます）`);
         } else {
-            const owned = ROAD_COLORS_ONLY.filter(c => ownedAuraData[c]);
-            if (owned.length === 0) {
-                await botMessage(`【${targetColor}】のロード秘伝オーラを未所持で、他に所持しているオーラもありませんでした。今回はオーラ制限なしで探索します。<br>（⚙️データ管理から所持オーラを登録しておくと、次回から自動で絞り込めます）`);
-            } else {
-                eligibleColors = owned;
-                await botMessage(`【${targetColor}】のロード秘伝オーラは未所持ですが、【${owned.join('・')}】を所持しています。父親側の探索対象をこれらのオーラ系統に限定します（それぞれの色ごとに、父親と祖父母のオーラが揃うように探索します）。`);
-            }
+            eligibleColors = owned;
+            await botMessage(`【${targetColor}】のロード秘伝オーラは未所持ですが、【${owned.join('・')}】を所持しています。父親側の探索対象をこれらのオーラ系統に限定します（それぞれの色ごとに、父親と祖父母のオーラが揃うように探索します）。`);
         }
     }
 
-    await botMessage('ここからは【父親側】の入力です（オーラ色の制限は自動探索の枠のみに適用され、固定した枠はそのまま使われます）。');
-    let fatherFixed = { f: null, ff: null, fm: null };
-    for (const [key, label] of [['f', '父親'], ['ff', '父方の祖父'], ['fm', '父方の祖母']]) {
-        fatherFixed[key] = await askMonsterOrSkip(`【${label}】を固定しますか？`, `${label}を選択（任意）`);
-    }
+    await botMessage('ここからは【父親側】の入力です。父親側はロード秘伝オーラを担当します。');
+    let fatherSet = { p: null, gp1: null, gp2: null };
+    fatherSet.p = await askMonsterOrSkip('【父親】を固定しますか？', '父親を選択（任意）');
+    fatherSet.gp1 = await askMonsterOrSkip('【父方の祖父】を固定しますか？', '父方の祖父を選択（任意）');
+    fatherSet.gp2 = await askMonsterOrSkip('【父方の祖母】を固定しますか？', '父方の祖母を選択（任意）');
 
     let excludedFather = new Set();
     const exFAns = await quickReplyPromise2('父親側で除外したいモンスターはいますか？', [{ label: '設定する', value: true }, { label: '設定しない', value: false }]);
@@ -877,11 +914,11 @@ async function runBattleFlow() {
         excludedFather = await askExclusionSet('父親側で除外するモンスターをタップして選んでください👇', '父親側の除外モンスターを選択', excludedFather);
     }
 
-    await botMessage('続いて【母親側】の入力です（ノーブル秘伝担当・今回はオーラの自動連携はまだ行いません）。');
-    let motherFixed = { m: null, mf: null, mm: null };
-    for (const [key, label] of [['m', '母親'], ['mf', '母方の祖父'], ['mm', '母方の祖母']]) {
-        motherFixed[key] = await askMonsterOrSkip(`【${label}】を固定しますか？`, `${label}を選択（任意）`);
-    }
+    await botMessage('続いて【母親側】の入力です。母親側はノーブル秘伝を担当します。');
+    let motherSet = { p: null, gp1: null, gp2: null };
+    motherSet.p = await askMonsterOrSkip('【母親】を固定しますか？', '母親を選択（任意）');
+    motherSet.gp1 = await askMonsterOrSkip('【母方の祖父】を固定しますか？', '母方の祖父を選択（任意）');
+    motherSet.gp2 = await askMonsterOrSkip('【母方の祖母】を固定しますか？', '母方の祖母を選択（任意）');
 
     let excludedMother = new Set();
     const exMAns = await quickReplyPromise2('母親側で除外したいモンスターはいますか？', [{ label: '設定する', value: true }, { label: '設定しない', value: false }]);
@@ -891,50 +928,38 @@ async function runBattleFlow() {
 
     const targetSymbol = await askTargetSymbol();
 
-    const action = await quickReplyPromise2('入力内容を確認しました。この内容で計算しますか？', [
-        { label: '✅ 計算する', value: 'calc' },
-        { label: '🔄 父親側⇔母親側の入力を入れ替えて計算', value: 'swap' },
-    ]);
-    if (action === 'swap') {
-        [fatherFixed, motherFixed] = [motherFixed, fatherFixed];
-        [excludedFather, excludedMother] = [excludedMother, excludedFather];
-        await botMessage('入れ替えました。ただしオーラの絞り込みは元々の父親側の設定のまま探索対象に適用されます。');
-    }
+    const state = { mode: 'battle', child, targetColor, eligibleColors, fatherSet, motherSet, excludedFather, excludedMother, targetSymbol };
+    await confirmAndCompute(state);
+}
 
+async function confirmAndCompute(state) {
+    await botMessage(confirmSummaryHTML(state));
+    showQuickReplies([
+        { label: '✅ 計算する', onClick: () => presentResultsAndMenu(state) },
+        { label: '✏️ 最初からやり直す', onClick: () => startComplementFlow() },
+    ]);
+}
+
+async function presentResultsAndMenu(state) {
+    clearQuickReplies();
     await botMessage('計算しています…🔮');
-    let pUnits;
-    if (eligibleColors) {
-        pUnits = eligibleColors.flatMap(color => computeUnitCandidates(child, fatherFixed.f, fatherFixed.ff, fatherFixed.fm, poolByColor(color, excludedFather)));
-    } else {
-        pUnits = computeUnitCandidates(child, fatherFixed.f, fatherFixed.ff, fatherFixed.fm, poolExcluding(excludedFather));
-    }
-    const mUnits = computeUnitCandidates(child, motherFixed.m, motherFixed.mf, motherFixed.mm, poolExcluding(excludedMother));
-    const combos = combineUnits(child, pUnits, mUnits).slice(0, 10);
+    const combos = computeCombos(state);
 
     if (combos.length === 0) {
         await botMessage('条件に合う組み合わせが見つかりませんでした。除外設定やオーラ条件を見直してみてください。');
     } else {
-        await botMessage(comboSummaryHTML(combos, targetSymbol));
-        appendDetailButton(() => openComboDetailPanel(combos, targetSymbol, child));
+        await botMessage(comboSummaryHTML(combos, state.targetSymbol));
+        appendDetailButton(() => openComboDetailPanel(combos, state.targetSymbol, state.child));
     }
-    afterComplementMenu();
-}
 
-function appendDetailButton(onClick) {
-    const rows = chatLog.querySelectorAll('.msg-row.bot');
-    const last = rows[rows.length - 1];
-    const bubble = last.querySelector('.bubble');
-    const btnWrap = document.createElement('div');
-    btnWrap.className = 'bubble-buttons';
-    btnWrap.innerHTML = `<button class="bubble-btn">📋 上位10件の詳細を見る</button>`;
-    btnWrap.querySelector('button').onclick = onClick;
-    bubble.appendChild(btnWrap);
-}
-
-function afterComplementMenu() {
     showQuickReplies([
         { label: '🔁 もう一度探索する', onClick: () => startComplementFlow() },
-        { label: '🎁 Gift/Tyrantを使う', onClick: () => selectFeature('gift') },
+        {
+            label: '🔄 父親側⇔母親側を入れ替えて計算', onClick: () => {
+                const swapped = { ...state, fatherSet: state.motherSet, motherSet: state.fatherSet, excludedFather: state.excludedMother, excludedMother: state.excludedFather };
+                presentResultsAndMenu(swapped);
+            }
+        },
     ]);
 }
 
