@@ -275,6 +275,11 @@ body {
 }
 .tray-overlay.show { opacity: 1; pointer-events: auto; }
 
+/* モンスター選択・相性値編集トレイは、データ管理パネル(z-index 32)の上にも表示できるよう
+   専用IDでさらに高いz-indexを指定する */
+#tray-overlay { z-index: 40; }
+#picker-tray { z-index: 41; }
+
 .picker-tray {
     position: fixed;
     left: 0; right: 0; bottom: 0;
