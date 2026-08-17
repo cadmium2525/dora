@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <!-- PWA Settings -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0b141a">
+
+    <title>LMF ギフトンツール</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        html { touch-action: manipulation; }
+    </style>
+</head>
+
+<body>
+
+    <!-- Header (LINE風トークヘッダー) -->
+    <header id="app-header">
+        <button id="header-back-btn" class="header-icon-btn" onclick="closeAnySubView()" style="visibility:hidden;">‹</button>
+        <div id="header-bot-avatar" class="bot-avatar">🎁</div>
+        <div class="header-title-block">
+            <div id="header-title" class="header-title">ギフトンBot</div>
+            <div id="header-subtitle" class="header-subtitle">オンライン</div>
+        </div>
+        <button id="header-settings-btn" class="header-icon-btn" onclick="openSettingsPanel()" title="データ管理">⚙️</button>
+    </header>
+
+    <!-- チャットログ -->
+    <main id="chat-log" aria-live="polite"></main>
+
+    <!-- ピッカートレイ（モンスター選択などLINEのキーボード風スライドトレイ） -->
+    <div id="picker-tray" class="picker-tray">
+        <div class="tray-handle"></div>
+        <div class="tray-header">
+            <span id="tray-title">モンスターを選択</span>
+            <button class="tray-close" onclick="closeTray()">閉じる</button>
+        </div>
+        <div id="tray-body" class="tray-body"></div>
+    </div>
+    <div id="tray-overlay" class="tray-overlay" onclick="closeTray()"></div>
+
+    <!-- 詳細結果パネル -->
+    <div id="detail-panel" class="detail-panel">
+        <div class="detail-panel-header">
+            <span id="detail-panel-title">詳細結果</span>
+            <button class="tray-close" onclick="closeDetailPanel()">閉じる</button>
+        </div>
+        <div id="detail-panel-body" class="detail-panel-body"></div>
+    </div>
+    <div id="detail-overlay" class="tray-overlay" onclick="closeDetailPanel()"></div>
+
+    <!-- 設定パネル（データ管理・非対話） -->
+    <div id="settings-panel" class="detail-panel">
+        <div class="detail-panel-header">
+            <span>⚙️ データ管理</span>
+            <button class="tray-close" onclick="closeSettingsPanel()">閉じる</button>
+        </div>
+        <div class="detail-panel-body">
+            <div class="settings-tabs">
+                <div id="stab-bloodline" class="settings-tab active" onclick="switchSettingsTab('bloodline')">血統データ（モンスター別）</div>
+                <div id="stab-owned-aura" class="settings-tab" onclick="switchSettingsTab('owned-aura')">所持ロード秘伝オーラ</div>
+                <div id="stab-about" class="settings-tab" onclick="switchSettingsTab('about')">このツールについて</div>
+            </div>
+            <div id="settings-view-bloodline" class="settings-view">
+                <p class="settings-help">各モンスターの血統が持つ、あなたが<b>入手済みのオーラ／ノーブル情報</b>にチェックしてください。ここでの内容はこの端末に保存され、次回起動時も自動的に呼び出されます。</p>
+                <div class="bloodline-actions">
+                    <button class="chip-btn" onclick="bloodlineCheckAll(true)">全てチェック</button>
+                    <button class="chip-btn" onclick="bloodlineCheckAll(false)">全て解除</button>
+                </div>
+                <div id="bloodline-table" class="bloodline-table"></div>
+            </div>
+            <div id="settings-view-owned-aura" class="settings-view" style="display:none;">
+                <p class="settings-help">あなたが<b>所持しているロード秘伝オーラ</b>（赤・青・黄・緑・白・黒）にチェックしてください。<br>詳細探索機能で使用する予定です。</p>
+                <div id="owned-aura-grid" class="owned-aura-grid"></div>
+            </div>
+            <div id="settings-view-about" class="settings-view" style="display:none;">
+                <p class="settings-help">LMFギフトンツール チャット版。<br>入力内容と血統データはこの端末のローカルストレージに保存され、外部には送信されません。</p>
+                <button class="chip-btn danger" onclick="resetAllData()">保存データをすべて削除</button>
+            </div>
+        </div>
+    </div>
+    <div id="settings-overlay" class="tray-overlay" onclick="closeSettingsPanel()"></div>
+
+    <!-- 下部メニュー（LINEのリッチメニュー相当） -->
+    <nav id="bottom-menu" class="bottom-menu">
+        <button class="menu-item active" data-feature="gift" onclick="selectFeature('gift')">
+            <span class="menu-icon">🎁</span><span>Gift/Tyrant</span>
+        </button>
+        <button class="menu-item" data-feature="reverse" onclick="selectFeature('reverse')">
+            <span class="menu-icon">🧩</span><span>補完探索</span>
+        </button>
+        <button class="menu-item" data-feature="detail" onclick="selectFeature('detail')">
+            <span class="menu-icon">🎯</span><span>詳細探索</span>
+        </button>
+        <button class="menu-item" data-feature="general" onclick="selectFeature('general')">
+            <span class="menu-icon">🔍</span><span>汎用探索</span>
+        </button>
+    </nav>
+
+    <script src="js/data.js"></script>
+    <script src="js/image_map.js"></script>
+    <script src="js/chat.js"></script>
+</body>
+
+</html>
