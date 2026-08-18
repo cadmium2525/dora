@@ -331,9 +331,31 @@ body {
     border: 1px solid transparent;
 }
 .monster-cell:active, .monster-cell.selected { background: var(--accent-soft); border-color: var(--accent); }
+.monster-cell.included { background: var(--accent-soft); border-color: var(--accent); }
 .monster-cell img { width: 40px; height: 40px; object-fit: contain; }
 .monster-cell span { font-size: 0.62rem; text-align: center; color: var(--bot-bubble-text); }
 .monster-cell.excluded { opacity: 0.35; }
+
+/* 汎用探索：計算進捗バー */
+.progress-bar-wrap {
+    width: 100%; height: 8px;
+    background: #0006;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 8px;
+}
+.progress-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.15s linear;
+}
+
+/* 汎用探索：育成対象ハイライト */
+.result-cell.target-highlight {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 1px var(--gold) inset;
+    background: rgba(244, 201, 93, 0.1);
+}
 
 /* ---------- Detail / Settings Panels ---------- */
 .detail-panel {

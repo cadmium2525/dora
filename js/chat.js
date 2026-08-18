@@ -519,6 +519,7 @@ const TARGET_SYMBOL_OPTIONS = [
 const ROAD_COLORS_ONLY = ['赤', '青', '黄', '緑', '白', '黒'];
 
 let complementFlowRunning = false;
+let generalFlowRunning = false;
 
 function calculateItemsForScore(currentScore, targetScore) {
     if (targetScore === 999 || currentScore >= targetScore) {
@@ -807,13 +808,13 @@ function comboSummaryHTML(combos, targetSymbol) {
     return `<div style="font-weight:700; margin-bottom:4px;">計算結果（上位3組）</div><div class="result-summary-list">${rows}</div>`;
 }
 
-function appendDetailButton(onClick) {
+function appendDetailButton(onClick, label = '📋 上位10件の詳細を見る') {
     const rows = chatLog.querySelectorAll('.msg-row.bot');
     const last = rows[rows.length - 1];
     const bubble = last.querySelector('.bubble');
     const btnWrap = document.createElement('div');
     btnWrap.className = 'bubble-buttons';
-    btnWrap.innerHTML = `<button class="bubble-btn">📋 上位10件の詳細を見る</button>`;
+    btnWrap.innerHTML = `<button class="bubble-btn">${label}</button>`;
     btnWrap.querySelector('button').onclick = onClick;
     bubble.appendChild(btnWrap);
 }
@@ -975,6 +976,377 @@ async function presentResultsAndMenu(state) {
 }
 
 // =========================================================
+// 汎用探索（総合力育成 / バトル用育成、複数育成対象の最低保証値最大化）
+// =========================================================
+const OP_SOFT_LIMIT = 20000000;   // これを超えると「少し時間がかかります」の注意を出す
+const OP_HARD_LIMIT = 300000000;  // これを超えると実行をブロックし、枠を減らすよう促す
+
+// ---- 汎用トレイ：育成対象の複数選択（2体以上・全血統一括ボタン付き） ----
+function pickTargetsRaw(title, initialSet, onCancel) {
+    return new Promise(resolve => {
+        pendingTrayCancel = onCancel;
+        const localSet = new Set(initialSet);
+        function draw() {
+            trayBody.innerHTML = `
+                <div style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+                    <button class="chip-btn" id="tg-all">全血統を一括指定（33体）</button>
+                    <button class="chip-btn" id="tg-clear">全解除</button>
+                    <button class="chip-btn" id="tg-done">この内容で決定（${localSet.size}体選択中）</button>
+                </div>
+                <div class="monster-grid" id="tg-grid"></div>
+            `;
+            const grid = document.getElementById('tg-grid');
+            MONSTER_NAMES.forEach((name, idx) => {
+                const cell = document.createElement('div');
+                cell.className = 'monster-cell' + (localSet.has(idx) ? ' included' : '');
+                cell.innerHTML = `<img src="${imgOf(idx)}" onerror="this.style.opacity=0"><span>${name}</span>`;
+                cell.onclick = () => { if (localSet.has(idx)) localSet.delete(idx); else localSet.add(idx); draw(); };
+                grid.appendChild(cell);
+            });
+            document.getElementById('tg-all').onclick = () => { MONSTER_NAMES.forEach((_, i) => localSet.add(i)); draw(); };
+            document.getElementById('tg-clear').onclick = () => { localSet.clear(); draw(); };
+            document.getElementById('tg-done').onclick = () => {
+                if (localSet.size < 2) { alert('育成対象は2体以上選択してください。'); return; }
+                pendingTrayCancel = null; closeTray(); resolve(localSet);
+            };
+        }
+        draw();
+        openTray(title);
+    });
+}
+
+function askTargets(questionHtml, trayTitle, initialSet) {
+    return new Promise(resolve => {
+        botMessage(`${questionHtml}<div class="bubble-buttons"><button class="bubble-btn">👉 タップして選ぶ（2体以上）</button></div>`).then(row => {
+            const btn = row.querySelector('button');
+            const openFlow = () => {
+                btn.disabled = true;
+                btn.textContent = '選択中…（トレイを開いています）';
+                pickTargetsRaw(trayTitle, initialSet, () => {
+                    btn.disabled = false;
+                    btn.textContent = '👉 タップして選ぶ（2体以上）';
+                }).then(set => {
+                    btn.disabled = true;
+                    btn.textContent = `✅ ${set.size}体を選択`;
+                    resolve(set);
+                });
+            };
+            btn.onclick = openFlow;
+        });
+    });
+}
+
+function targetsIconsHTML(targetsSet) {
+    return `<div style="display:flex; flex-wrap:wrap; gap:3px; margin-top:2px;">${[...targetsSet].map(i => `<img src="${imgOf(i)}" title="${MONSTER_NAMES[i]}" style="width:22px;height:22px;border-radius:4px;" onerror="this.style.display='none'">`).join('')}</div>`;
+}
+
+// ---- 計算量見積もり ----
+function buildGeneralDomains(state) {
+    const { fatherSet, motherSet, excluded, eligibleColors } = state;
+    const sharedPool = poolExcluding(excluded);
+    let fatherGroups;
+    if (eligibleColors) {
+        fatherGroups = eligibleColors.map(color => ({
+            f: fatherSet.p !== null ? [fatherSet.p] : poolByColor(color, excluded),
+            ff: fatherSet.gp1 !== null ? [fatherSet.gp1] : poolByColor(color, excluded),
+            fm: fatherSet.gp2 !== null ? [fatherSet.gp2] : poolByColor(color, excluded),
+        }));
+    } else {
+        fatherGroups = [{
+            f: fatherSet.p !== null ? [fatherSet.p] : sharedPool,
+            ff: fatherSet.gp1 !== null ? [fatherSet.gp1] : sharedPool,
+            fm: fatherSet.gp2 !== null ? [fatherSet.gp2] : sharedPool,
+        }];
+    }
+    const motherGroup = {
+        m: motherSet.p !== null ? [motherSet.p] : sharedPool,
+        mf: motherSet.gp1 !== null ? [motherSet.gp1] : sharedPool,
+        mm: motherSet.gp2 !== null ? [motherSet.gp2] : sharedPool,
+    };
+    return { fatherGroups, motherGroup };
+}
+
+function estimateGeneralOps(state) {
+    const { fatherGroups, motherGroup } = buildGeneralDomains(state);
+    const fatherCombos = fatherGroups.reduce((sum, g) => sum + g.f.length * g.ff.length * g.fm.length, 0);
+    const motherCombos = motherGroup.m.length * motherGroup.mf.length * motherGroup.mm.length;
+    const totalParentCombos = fatherCombos * motherCombos;
+    const totalOps = totalParentCombos * state.targets.size;
+    return { totalParentCombos, totalOps };
+}
+
+// ---- 探索コア（総当たり・完全精度・チャンク分割で画面が固まらないようにする） ----
+async function runGeneralSearch(state, onProgress) {
+    const { fatherGroups, motherGroup } = buildGeneralDomains(state);
+    const targets = [...state.targets];
+    let top = [];
+    let processed = 0;
+    const { totalParentCombos } = estimateGeneralOps(state);
+    const CHUNK = 20000;
+    let sinceYield = 0;
+
+    function considerCombo(f, ff, fm, m, mf, mm) {
+        let minScore = Infinity;
+        const worst = top.length === 10 ? top[9].minScore : -Infinity;
+        for (const t of targets) {
+            const s = calculateScore(t, f, ff, fm, m, mf, mm, 0, 0, 0);
+            if (s < minScore) minScore = s;
+            if (minScore <= worst) return; // これ以上調べても上位10には入れない
+        }
+        top.push({ f, ff, fm, m, mf, mm, minScore });
+        top.sort((a, b) => b.minScore - a.minScore);
+        if (top.length > 10) top.length = 10;
+    }
+
+    for (const group of fatherGroups) {
+        for (const f of group.f) {
+            for (const ff of group.ff) {
+                for (const fm of group.fm) {
+                    for (const m of motherGroup.m) {
+                        for (const mf of motherGroup.mf) {
+                            for (const mm of motherGroup.mm) {
+                                considerCombo(f, ff, fm, m, mf, mm);
+                                processed++;
+                                sinceYield++;
+                                if (sinceYield >= CHUNK) {
+                                    sinceYield = 0;
+                                    if (onProgress) onProgress(processed, totalParentCombos);
+                                    await new Promise(r => setTimeout(r, 0));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (onProgress) onProgress(processed, totalParentCombos);
+    return top;
+}
+
+// ---- 結果表示 ----
+function comboParentsBlockHTML(entry) {
+    return `
+        <div style="display:flex; gap:14px; flex-wrap:wrap;">
+            <div>
+                <div style="font-size:0.68rem; color:var(--muted); margin-bottom:2px;">父親側</div>
+                <div style="display:flex; gap:4px;">
+                    <div style="text-align:center;"><img src="${imgOf(entry.f)}" style="width:34px;height:34px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[entry.f]}</div></div>
+                    <div style="text-align:center;"><img src="${imgOf(entry.ff)}" style="width:34px;height:34px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[entry.ff]}</div></div>
+                    <div style="text-align:center;"><img src="${imgOf(entry.fm)}" style="width:34px;height:34px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[entry.fm]}</div></div>
+                </div>
+            </div>
+            <div>
+                <div style="font-size:0.68rem; color:var(--muted); margin-bottom:2px;">母親側</div>
+                <div style="display:flex; gap:4px;">
+                    <div style="text-align:center;"><img src="${imgOf(entry.m)}" style="width:34px;height:34px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[entry.m]}</div></div>
+                    <div style="text-align:center;"><img src="${imgOf(entry.mf)}" style="width:34px;height:34px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[entry.mf]}</div></div>
+                    <div style="text-align:center;"><img src="${imgOf(entry.mm)}" style="width:34px;height:34px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[entry.mm]}</div></div>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top:6px; font-size:0.78rem;">最低保証：<b style="color:${SYMBOL_COLOR[getSymbol(entry.minScore)]}">${getSymbol(entry.minScore)} ${entry.minScore.toFixed(1)}</b></div>
+    `;
+}
+
+function generalCardHTML(entry, rank) {
+    return `
+        <div class="result-cell" style="grid-column: span 2; text-align:left; display:flex; gap:8px; align-items:flex-start; margin-bottom:8px;">
+            <div style="flex:0 0 auto; font-weight:700; color:var(--gold);">#${rank}</div>
+            <div style="flex:1;">
+                ${comboParentsBlockHTML(entry)}
+                <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn-gen" data-idx="${rank - 1}">🎁 Gift/Tyrantを使う</button></div>
+            </div>
+        </div>
+    `;
+}
+
+// 元ツール踏襲：最適な組み合わせのみ「全モンスターとの相性一覧」を表示し、育成対象を強調表示
+function generalBestFullGridHTML(bestEntry, targetsSet) {
+    const list = MONSTER_NAMES.map((name, id) => {
+        const s = calculateScore(id, bestEntry.f, bestEntry.ff, bestEntry.fm, bestEntry.m, bestEntry.mf, bestEntry.mm, 0, 0, 0);
+        return { id, name, score: s, symbol: getSymbol(s) };
+    });
+    list.sort((a, b) => b.score - a.score);
+    return `<div class="result-grid">${list.map(item => {
+        const highlighted = targetsSet.has(item.id);
+        return `
+            <div class="result-cell${highlighted ? ' target-highlight' : ''}">
+                <div class="rc-symbol" style="color:${SYMBOL_COLOR[item.symbol]}">${item.symbol}</div>
+                <img src="${imgOf(item.id)}" onerror="this.style.display='none'">
+                <div class="rc-name">${item.name}${highlighted ? ' ⭐' : ''}</div>
+                <div class="rc-score">${item.score.toFixed(1)}</div>
+            </div>
+        `;
+    }).join('')}</div>`;
+}
+
+function openGeneralDetailPanel(top, targetsSet) {
+    document.getElementById('detail-panel-title').textContent = '育成候補（最低保証値順）';
+    const body = document.getElementById('detail-panel-body');
+    const best = top[0];
+    body.innerHTML = `
+        <div style="font-weight:700; margin-bottom:6px;">🏆 最適な組み合わせ</div>
+        ${comboParentsBlockHTML(best)}
+        <div class="bubble-buttons" style="margin:8px 0;"><button class="chip-btn mx-gift-btn-gen-best">🎁 この組み合わせでGift/Tyrantを使う</button></div>
+        <div style="font-size:0.75rem; color:var(--muted); margin:12px 0 6px;">全モンスターとの相性一覧（⭐=指定した育成対象）</div>
+        ${generalBestFullGridHTML(best, targetsSet)}
+        <div style="font-weight:700; margin:16px 0 8px;">上位10件の組み合わせ</div>
+        ${top.map((e, i) => generalCardHTML(e, i + 1)).join('')}
+    `;
+    const bestBtn = body.querySelector('.mx-gift-btn-gen-best');
+    if (bestBtn) bestBtn.onclick = () => applyGeneralComboToGift(best);
+    body.querySelectorAll('.mx-gift-btn-gen').forEach(btn => {
+        btn.onclick = () => applyGeneralComboToGift(top[Number(btn.dataset.idx)]);
+    });
+    document.getElementById('detail-panel').classList.add('show');
+    document.getElementById('detail-overlay').classList.add('show');
+}
+
+async function applyGeneralComboToGift(entry) {
+    const data = { f: entry.f, ff: entry.ff, fm: entry.fm, m: entry.m, mf: entry.mf, mm: entry.mm };
+    closeAnySubView();
+    setHeader('gift');
+    sysNote('汎用探索の候補をGift/Tyrantに反映しました');
+    await startGiftFlow({ mode: 'restore', data });
+}
+
+function generalSummaryHTML(best) {
+    return `<div style="font-weight:700; margin-bottom:6px;">🏆 最適な組み合わせが見つかりました</div>${comboParentsBlockHTML(best)}`;
+}
+
+// ---- 確認画面 ----
+function generalConfirmSummaryHTML(state) {
+    const { mode, targets, targetColor, fatherSet, motherSet, excluded } = state;
+    let html = `<div style="font-weight:700; margin-bottom:8px;">入力内容の確認</div>`;
+    html += `<div style="font-size:0.72rem; color:var(--muted); margin-bottom:2px;">育成対象（${targets.size}体）${mode === 'battle' ? `／狙うオーラ：${targetColor}` : ''}</div>`;
+    html += targetsIconsHTML(targets);
+
+    html += `<div style="font-size:0.72rem; color:var(--muted); margin:10px 0 4px;">${mode === 'battle' ? '父親側（ロード秘伝オーラ担当）' : '父親側'}</div>`;
+    html += `<div style="display:flex; gap:5px; flex-wrap:wrap;">${fixedSlotChip(fatherSet.p, '父')}${fixedSlotChip(fatherSet.gp1, '祖父')}${fixedSlotChip(fatherSet.gp2, '祖母')}</div>`;
+
+    html += `<div style="font-size:0.72rem; color:var(--muted); margin:10px 0 4px;">${mode === 'battle' ? '母親側（ノーブル秘伝担当）' : '母親側'}</div>`;
+    html += `<div style="display:flex; gap:5px; flex-wrap:wrap;">${fixedSlotChip(motherSet.p, '母')}${fixedSlotChip(motherSet.gp1, '祖父')}${fixedSlotChip(motherSet.gp2, '祖母')}</div>`;
+
+    html += `<div style="font-size:0.68rem; color:var(--muted); margin-top:10px;">探索対象から除外するモンスター：${excludedIconsHTML(excluded)}</div>`;
+    return html;
+}
+
+async function confirmAndRunGeneral(state) {
+    const { totalOps } = estimateGeneralOps(state);
+    let warnHtml = '';
+    let blocked = false;
+    if (totalOps > OP_HARD_LIMIT) {
+        blocked = true;
+        warnHtml = `<div style="color:var(--danger); font-size:0.75rem; margin-top:10px;">⚠️ 計算量が多すぎます（推定約${totalOps.toLocaleString()}回）。このままだと処理が終わらない可能性があるため、固定する枠を増やすか、育成対象・探索対象を絞ってください。</div>`;
+    } else if (totalOps > OP_SOFT_LIMIT) {
+        warnHtml = `<div style="color:var(--gold); font-size:0.72rem; margin-top:10px;">⏳ 計算量がやや多いです（推定約${totalOps.toLocaleString()}回）。少し時間がかかる場合があります。</div>`;
+    }
+    await botMessage(generalConfirmSummaryHTML(state) + warnHtml);
+    if (blocked) {
+        showQuickReplies([
+            { label: '✏️ 入力をやり直す（枠を減らす）', onClick: () => startGeneralFlow() },
+        ]);
+    } else {
+        showQuickReplies([
+            { label: '✅ 計算する', onClick: () => presentGeneralResultsAndMenu(state) },
+            { label: '✏️ 最初からやり直す', onClick: () => startGeneralFlow() },
+        ]);
+    }
+}
+
+async function presentGeneralResultsAndMenu(state) {
+    clearQuickReplies();
+    const progressRow = await botMessage(`計算しています…🔮<div class="progress-bar-wrap"><div class="progress-bar-fill" id="gen-progress-fill" style="width:0%"></div></div><div id="gen-progress-text" style="font-size:0.68rem; color:var(--muted); margin-top:4px;">0%</div>`);
+    const top = await runGeneralSearch(state, (done, total) => {
+        const pct = total > 0 ? Math.min(100, Math.floor((done / total) * 100)) : 100;
+        const fill = document.getElementById('gen-progress-fill');
+        const text = document.getElementById('gen-progress-text');
+        if (fill) fill.style.width = pct + '%';
+        if (text) text.textContent = `${pct}%（${done.toLocaleString()} / ${total.toLocaleString()} 組み合わせ）`;
+    });
+
+    if (top.length === 0) {
+        await botMessage('条件に合う組み合わせが見つかりませんでした。除外設定や固定枠を見直してみてください。');
+    } else {
+        await botMessage(generalSummaryHTML(top[0]));
+        appendDetailButton(() => openGeneralDetailPanel(top, state.targets), '📋 全モンスター相性一覧・上位10件を見る');
+    }
+
+    showQuickReplies([
+        { label: '🔁 もう一度探索する', onClick: () => startGeneralFlow() },
+        {
+            label: '🔄 父親側⇔母親側を入れ替えて計算', onClick: () => {
+                const swapped = { ...state, fatherSet: state.motherSet, motherSet: state.fatherSet };
+                presentGeneralResultsAndMenu(swapped);
+            }
+        },
+    ]);
+}
+
+// ---- メインフロー ----
+async function startGeneralFlow() {
+    if (generalFlowRunning) return;
+    generalFlowRunning = true;
+    clearQuickReplies();
+    setHeader('general');
+
+    await botMessage('汎用探索を始めましょう🔍<br>2体以上の育成対象モンスターに対して、全員が満たせる最低保証値が最も高くなる親・祖父母の組み合わせを探します。');
+
+    const mode = await quickReplyPromise([
+        { label: '🏆 総合力育成（通常の汎用探索）', value: 'total' },
+        { label: '⚔️ バトル用育成（オーラ指定あり）', value: 'battle' },
+    ]);
+
+    const targetsSet = await askTargets('育成対象となるモンスターを選んでください（2体以上）👇', '育成対象を選択', new Set());
+
+    let targetColor = null;
+    let eligibleColors = null;
+    if (mode === 'battle') {
+        targetColor = await quickReplyPromise2('今回狙うオーラ色を選んでください。', ROAD_COLORS_ONLY.map(c => ({ label: c, value: c })));
+        if (ownedAuraData[targetColor]) {
+            eligibleColors = [targetColor];
+            await botMessage(`【${targetColor}】のロード秘伝オーラを所持しています。父親側の探索対象を${targetColor}系の血統に限定します。`);
+        } else {
+            const owned = ROAD_COLORS_ONLY.filter(c => ownedAuraData[c]);
+            if (owned.length === 0) {
+                await botMessage(`【${targetColor}】のロード秘伝オーラを未所持で、他に所持しているオーラもありませんでした。今回はオーラ制限なしで探索します。`);
+            } else {
+                eligibleColors = owned;
+                await botMessage(`【${targetColor}】のロード秘伝オーラは未所持ですが、【${owned.join('・')}】を所持しています。父親側の探索対象をこれらのオーラ系統に限定します。`);
+            }
+        }
+        await botMessage('ここからは【父親側】です。父親側はロード秘伝オーラを担当します。固定したい枠はありますか？（指定しない枠は自動探索の対象になります。開放する枠が多いほど計算量が増えます）');
+    } else {
+        await botMessage('親・祖父母の中で固定したい枠はありますか？（指定しない枠は自動探索の対象になります。開放する枠が多いほど計算量が増えます）');
+    }
+
+    let fatherSet = { p: null, gp1: null, gp2: null };
+    fatherSet.p = await askMonsterOrSkip('【父親】を固定しますか？', '父親を選択（任意）');
+    fatherSet.gp1 = await askMonsterOrSkip('【父方の祖父】を固定しますか？', '父方の祖父を選択（任意）');
+    fatherSet.gp2 = await askMonsterOrSkip('【父方の祖母】を固定しますか？', '父方の祖母を選択（任意）');
+
+    if (mode === 'battle') {
+        await botMessage('続いて【母親側】です。母親側はノーブル秘伝を担当します。');
+    }
+    let motherSet = { p: null, gp1: null, gp2: null };
+    motherSet.p = await askMonsterOrSkip('【母親】を固定しますか？', '母親を選択（任意）');
+    motherSet.gp1 = await askMonsterOrSkip('【母方の祖父】を固定しますか？', '母方の祖父を選択（任意）');
+    motherSet.gp2 = await askMonsterOrSkip('【母方の祖母】を固定しますか？', '母方の祖母を選択（任意）');
+
+    let excluded = new Set();
+    const exAns = await quickReplyPromise2('探索対象（親・祖父母の候補）から除外したいモンスターはいますか？', [{ label: '設定する', value: true }, { label: '設定しない', value: false }]);
+    if (exAns) {
+        excluded = await askExclusionSet('除外するモンスターをタップして選んでください👇', '除外モンスターを選択', excluded);
+    }
+
+    const state = { mode, targets: targetsSet, targetColor, eligibleColors, fatherSet, motherSet, excluded };
+    await confirmAndRunGeneral(state);
+
+    generalFlowRunning = false;
+}
+
+// =========================================================
 // 起動時：前回入力の復元チェック
 // =========================================================
 async function maybeOfferRestore() {
@@ -1011,27 +1383,30 @@ function setHeader(feature) {
 async function selectFeature(feature) {
     closeAnySubView();
     setHeader(feature);
+    // ナビゲーションでの切り替えは常に新しく開始する（別の探索が進行中でも切り替えられるようにする）
+    giftFlowRunning = false;
+    complementFlowRunning = false;
+    generalFlowRunning = false;
+    clearQuickReplies();
     if (feature === 'gift') {
-        if (!giftFlowRunning) {
-            clearQuickReplies();
-            sysNote('Gift/Tyrant タブに切り替えました');
-            await maybeOfferRestore();
-        }
+        sysNote('タイラント タブに切り替えました');
+        await maybeOfferRestore();
         return;
     }
     if (feature === 'reverse') {
-        if (!complementFlowRunning) {
-            clearQuickReplies();
-            sysNote('補完探索 タブに切り替えました');
-            await startComplementFlow();
-        }
+        sysNote('補完探索 タブに切り替えました');
+        await startComplementFlow();
         return;
     }
-    clearQuickReplies();
+    if (feature === 'general') {
+        sysNote('汎用探索 タブに切り替えました');
+        await startGeneralFlow();
+        return;
+    }
     sysNote(`${FEATURE_META[feature].title.replace('Bot', '')} タブに切り替えました`);
-    await botMessage(`${FEATURE_META[feature].icon} この機能は現在チャットUI対応の準備中です。<br>Gift/TyrantとBox補完探索から会話型に作り直しています。今しばらくお待ちください🙏`);
+    await botMessage(`${FEATURE_META[feature].icon} この機能は現在チャットUI対応の準備中です。<br>今しばらくお待ちください🙏`);
     showQuickReplies([
-        { label: '🎁 Gift/Tyrantを使う', onClick: () => selectFeature('gift') },
+        { label: '🎁 タイラントを使う', onClick: () => selectFeature('gift') },
         { label: '🧩 補完探索を使う', onClick: () => selectFeature('reverse') },
     ]);
 }
@@ -1237,7 +1612,7 @@ async function showWelcomeMessage() {
     document.getElementById('header-bot-avatar').textContent = '🤖';
     document.getElementById('header-subtitle').textContent = 'モードを選んでください';
     await botMessage('はじめまして、LMFギフトンツールのBotです🎉<br>モンスターの相性計算や配合候補の探索をお手伝いします。');
-    await botMessage('下のナビゲーションバーから使いたいモードを選んでください👇<br>🎁 Gift/Tyrant：親を指定して育成候補モンスターを計算<br>🧩 補完探索：育成したいモンスターから足りない親を自動探索');
+    await botMessage('下のナビゲーションバーから使いたいモードを選んでください👇<br>🎁 タイラント：親を指定して育成候補モンスターを計算<br>🧩 補完探索：育成したいモンスターから足りない親を自動探索<br>🔍 汎用探索：複数の育成対象すべてに対する最適な親・祖父母を探索');
 }
 
 document.addEventListener('DOMContentLoaded', () => {
