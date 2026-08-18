@@ -807,6 +807,17 @@ function comboSummaryHTML(combos, targetSymbol) {
     return `<div style="font-weight:700; margin-bottom:4px;">計算結果（上位3組）</div><div class="result-summary-list">${rows}</div>`;
 }
 
+function appendDetailButton(onClick) {
+    const rows = chatLog.querySelectorAll('.msg-row.bot');
+    const last = rows[rows.length - 1];
+    const bubble = last.querySelector('.bubble');
+    const btnWrap = document.createElement('div');
+    btnWrap.className = 'bubble-buttons';
+    btnWrap.innerHTML = `<button class="bubble-btn">📋 上位10件の詳細を見る</button>`;
+    btnWrap.querySelector('button').onclick = onClick;
+    bubble.appendChild(btnWrap);
+}
+
 // ---- 探索コア（stateから候補を計算） ----
 function computeCombos(state) {
     const { child, fatherSet, motherSet, excludedFather, excludedMother, eligibleColors } = state;
