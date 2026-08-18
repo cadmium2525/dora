@@ -232,7 +232,7 @@ function askAndPickMonster(questionHtml, trayTitle) {
                     btn.textContent = '👉 タップしてモンスターを選ぶ';
                 }).then(idx => {
                     btn.disabled = true;
-                    btn.textContent = '✅ 選択済み';
+                    btn.innerHTML = `<img src="${imgOf(idx)}" style="width:20px;height:20px;vertical-align:middle;border-radius:4px;margin-right:4px;" onerror="this.style.display='none'">✅ ${MONSTER_NAMES[idx]}`;
                     resolve(idx);
                 });
             };
@@ -556,7 +556,7 @@ function askMonsterOrSkip(questionHtml, trayTitle) {
                     pickBtn.textContent = '👉 タップして選ぶ';
                 }).then(idx => {
                     pickBtn.disabled = true; skipBtn.disabled = true;
-                    pickBtn.textContent = '✅ 選択済み';
+                    pickBtn.innerHTML = `<img src="${imgOf(idx)}" style="width:20px;height:20px;vertical-align:middle;border-radius:4px;margin-right:4px;" onerror="this.style.display='none'">✅ ${MONSTER_NAMES[idx]}`;
                     skipBtn.style.display = 'none';
                     resolve(idx);
                 });
@@ -702,9 +702,9 @@ function excludedIconsHTML(excludedSet) {
 
 function fixedSlotChip(idx, label) {
     if (idx === null || idx === undefined) {
-        return `<span style="background:#10202b; border:1px solid var(--border); font-size:0.68rem; padding:3px 7px; border-radius:8px; color:var(--muted);">${label}：未指定（自動探索）</span>`;
+        return `<span style="display:inline-flex; align-items:center; background:#10202b; border:1px solid var(--border); font-size:0.68rem; padding:3px 7px; border-radius:8px; color:var(--muted);">${label}：未指定（自動探索）</span>`;
     }
-    return `<span style="background:var(--accent-soft); border:1px solid var(--accent); font-size:0.68rem; padding:3px 7px; border-radius:8px; color:var(--accent);">${label}：${MONSTER_NAMES[idx]}</span>`;
+    return `<span style="display:inline-flex; align-items:center; gap:4px; background:var(--accent-soft); border:1px solid var(--accent); font-size:0.68rem; padding:3px 7px 3px 3px; border-radius:8px; color:var(--accent);"><img src="${imgOf(idx)}" style="width:18px;height:18px;border-radius:4px;" onerror="this.style.display='none'">${label}：${MONSTER_NAMES[idx]}</span>`;
 }
 
 function currentPositions(state) {
@@ -779,7 +779,7 @@ function comboCardHTML(combo, rank, targetSymbol) {
                     </div>
                 </div>
                 ${itemsNote}
-                <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn" data-idx="${rank - 1}">🎁 この組み合わせでGift/Tyrantを使う</button></div>
+                <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn" data-idx="${rank - 1}">🎁 この組み合わせでタイラントを使う</button></div>
             </div>
         </div>
     `;
@@ -806,7 +806,7 @@ async function applyComboToGift(combo, targetSymbol) {
     const data = { f: combo.f, ff: combo.ff, fm: combo.fm, m: combo.m, mf: combo.mf, mm: combo.mm, s3: itemRes.s3, s2: itemRes.s2, noble: itemRes.noble };
     closeAnySubView();
     setHeader('gift');
-    sysNote('補完探索の候補をGift/Tyrantに反映しました');
+    sysNote('補完探索の候補をタイラントに反映しました');
     await startGiftFlow({ mode: 'restore', data });
 }
 
@@ -1185,7 +1185,7 @@ function generalCardHTML(entry, rank) {
             <div style="flex:0 0 auto; font-weight:700; color:var(--gold);">#${rank}</div>
             <div style="flex:1;">
                 ${comboParentsBlockHTML(entry)}
-                <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn-gen" data-idx="${rank - 1}">🎁 Gift/Tyrantを使う</button></div>
+                <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn-gen" data-idx="${rank - 1}">🎁 タイラントを使う</button></div>
             </div>
         </div>
     `;
@@ -1218,7 +1218,7 @@ function openGeneralDetailPanel(top, targetsSet) {
     body.innerHTML = `
         <div style="font-weight:700; margin-bottom:6px;">🏆 最適な組み合わせ</div>
         ${comboParentsBlockHTML(best)}
-        <div class="bubble-buttons" style="margin:8px 0;"><button class="chip-btn mx-gift-btn-gen-best">🎁 この組み合わせでGift/Tyrantを使う</button></div>
+        <div class="bubble-buttons" style="margin:8px 0;"><button class="chip-btn mx-gift-btn-gen-best">🎁 この組み合わせでタイラントを使う</button></div>
         <div style="font-size:0.75rem; color:var(--muted); margin:12px 0 6px;">全モンスターとの相性一覧（⭐=指定した育成対象）</div>
         ${generalBestFullGridHTML(best, targetsSet)}
         <div style="font-weight:700; margin:16px 0 8px;">上位10件の組み合わせ</div>
@@ -1237,7 +1237,7 @@ async function applyGeneralComboToGift(entry) {
     const data = { f: entry.f, ff: entry.ff, fm: entry.fm, m: entry.m, mf: entry.mf, mm: entry.mm };
     closeAnySubView();
     setHeader('gift');
-    sysNote('汎用探索の候補をGift/Tyrantに反映しました');
+    sysNote('汎用探索の候補をタイラントに反映しました');
     await startGiftFlow({ mode: 'restore', data });
 }
 
