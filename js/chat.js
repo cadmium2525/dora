@@ -707,20 +707,35 @@ function fixedSlotChip(idx, label) {
     return `<span style="background:var(--accent-soft); border:1px solid var(--accent); font-size:0.68rem; padding:3px 7px; border-radius:8px; color:var(--accent);">${label}：${MONSTER_NAMES[idx]}</span>`;
 }
 
+function currentPositions(state) {
+    // state.roadSet/nobleSet は「ロード秘伝担当」「ノーブル秘伝担当」の中身そのもの（入れ替えても中身は変わらない）。
+    // state.swapped が true のとき、ロード担当が母親側に、ノーブル担当が父親側に表示される。
+    const swapped = !!state.swapped;
+    return {
+        fatherSet: swapped ? state.nobleSet : state.roadSet,
+        motherSet: swapped ? state.roadSet : state.nobleSet,
+        excludedFather: swapped ? state.excludedNoble : state.excludedRoad,
+        excludedMother: swapped ? state.excludedRoad : state.excludedNoble,
+        fatherDuty: state.mode === 'battle' ? (swapped ? 'ノーブル秘伝担当' : 'ロード秘伝オーラ担当') : null,
+        motherDuty: state.mode === 'battle' ? (swapped ? 'ロード秘伝オーラ担当' : 'ノーブル秘伝担当') : null,
+    };
+}
+
 function confirmSummaryHTML(state) {
-    const { mode, child, targetColor, fatherSet, motherSet, excludedFather, excludedMother, targetSymbol } = state;
+    const { mode, child, targetColor, targetSymbol } = state;
+    const { fatherSet, motherSet, excludedFather, excludedMother, fatherDuty, motherDuty } = currentPositions(state);
     const symbolOpt = TARGET_SYMBOL_OPTIONS.find(o => o.value === targetSymbol);
     const symbolLabel = symbolOpt ? symbolOpt.label : '指定なし';
     let html = `<div style="font-weight:700; margin-bottom:8px;">入力内容の確認</div>`;
     html += `<div class="bubble-card" style="margin-bottom:10px;"><img src="${imgOf(child)}" onerror="this.style.display='none'"><div><div class="cc-label">育成モンスター${mode === 'battle' ? `／狙うオーラ：${targetColor}` : ''}</div><div class="cc-name">${MONSTER_NAMES[child]}</div></div></div>`;
 
-    html += `<div style="font-size:0.72rem; color:var(--muted); margin-bottom:4px;">${mode === 'battle' ? '父親側（ロード秘伝オーラ担当）' : '父親側'}</div>`;
+    html += `<div style="font-size:0.72rem; color:var(--muted); margin-bottom:4px;">${mode === 'battle' ? `父親側（${fatherDuty}）` : '父親側'}</div>`;
     html += `<div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:6px;">${fixedSlotChip(fatherSet.p, '父')}${fixedSlotChip(fatherSet.gp1, '祖父')}${fixedSlotChip(fatherSet.gp2, '祖母')}</div>`;
     if (mode === 'battle') {
         html += `<div style="font-size:0.68rem; color:var(--muted); margin-bottom:10px;">除外モンスター：${excludedIconsHTML(excludedFather)}</div>`;
     }
 
-    html += `<div style="font-size:0.72rem; color:var(--muted); margin-bottom:4px;">${mode === 'battle' ? '母親側（ノーブル秘伝担当）' : '母親側'}</div>`;
+    html += `<div style="font-size:0.72rem; color:var(--muted); margin-bottom:4px;">${mode === 'battle' ? `母親側（${motherDuty}）` : '母親側'}</div>`;
     html += `<div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:6px;">${fixedSlotChip(motherSet.p, '母')}${fixedSlotChip(motherSet.gp1, '祖父')}${fixedSlotChip(motherSet.gp2, '祖母')}</div>`;
     if (mode === 'battle') {
         html += `<div style="font-size:0.68rem; color:var(--muted); margin-bottom:10px;">除外モンスター：${excludedIconsHTML(excludedMother)}</div>`;
@@ -820,16 +835,21 @@ function appendDetailButton(onClick, label = '📋 上位10件の詳細を見る
 }
 
 // ---- 探索コア（stateから候補を計算） ----
+// オーラ絞り込みは常に「ロード秘伝担当（roadSet）」の中身に適用される（父親側/母親側どちらに表示されていても）
 function computeCombos(state) {
-    const { child, fatherSet, motherSet, excludedFather, excludedMother, eligibleColors } = state;
-    let pUnits;
+    const { child, roadSet, nobleSet, excludedRoad, excludedNoble, eligibleColors } = state;
+    let roadUnits;
     if (eligibleColors) {
-        pUnits = eligibleColors.flatMap(color => computeUnitCandidates(child, fatherSet.p, fatherSet.gp1, fatherSet.gp2, poolByColor(color, excludedFather)));
+        roadUnits = eligibleColors.flatMap(color => computeUnitCandidates(child, roadSet.p, roadSet.gp1, roadSet.gp2, poolByColor(color, excludedRoad)));
     } else {
-        pUnits = computeUnitCandidates(child, fatherSet.p, fatherSet.gp1, fatherSet.gp2, poolExcluding(excludedFather));
+        roadUnits = computeUnitCandidates(child, roadSet.p, roadSet.gp1, roadSet.gp2, poolExcluding(excludedRoad));
     }
-    const mUnits = computeUnitCandidates(child, motherSet.p, motherSet.gp1, motherSet.gp2, poolExcluding(excludedMother));
-    return combineUnits(child, pUnits, mUnits).slice(0, 10);
+    const nobleUnits = computeUnitCandidates(child, nobleSet.p, nobleSet.gp1, nobleSet.gp2, poolExcluding(excludedNoble));
+
+    // 表示上の父親側/母親側へのマッピング（入れ替え状態に応じる）
+    const fatherUnits = state.swapped ? nobleUnits : roadUnits;
+    const motherUnits = state.swapped ? roadUnits : nobleUnits;
+    return combineUnits(child, fatherUnits, motherUnits).slice(0, 10);
 }
 
 // ---- メインフロー ----
@@ -890,7 +910,7 @@ async function runTotalPowerFlow() {
 
     const targetSymbol = await askTargetSymbol();
 
-    const state = { mode: 'total', child, targetColor: null, eligibleColors: null, fatherSet, motherSet, excludedFather: excluded, excludedMother: excluded, targetSymbol };
+    const state = { mode: 'total', child, targetColor: null, eligibleColors: null, roadSet: fatherSet, nobleSet: motherSet, excludedRoad: excluded, excludedNoble: excluded, swapped: false, targetSymbol };
     await confirmAndCompute(state);
 }
 
@@ -940,7 +960,7 @@ async function runBattleFlow() {
 
     const targetSymbol = await askTargetSymbol();
 
-    const state = { mode: 'battle', child, targetColor, eligibleColors, fatherSet, motherSet, excludedFather, excludedMother, targetSymbol };
+    const state = { mode: 'battle', child, targetColor, eligibleColors, roadSet: fatherSet, nobleSet: motherSet, excludedRoad: excludedFather, excludedNoble: excludedMother, swapped: false, targetSymbol };
     await confirmAndCompute(state);
 }
 
@@ -960,7 +980,12 @@ async function presentResultsAndMenu(state) {
     if (combos.length === 0) {
         await botMessage('条件に合う組み合わせが見つかりませんでした。除外設定やオーラ条件を見直してみてください。');
     } else {
-        await botMessage(comboSummaryHTML(combos, state.targetSymbol));
+        let summaryHtml = comboSummaryHTML(combos, state.targetSymbol);
+        if (state.mode === 'battle') {
+            const { fatherDuty, motherDuty } = currentPositions(state);
+            summaryHtml += `<div style="font-size:0.68rem; color:var(--muted); margin-top:6px;">現在：父親側＝${fatherDuty}／母親側＝${motherDuty}</div>`;
+        }
+        await botMessage(summaryHtml);
         appendDetailButton(() => openComboDetailPanel(combos, state.targetSymbol, state.child));
     }
 
@@ -968,8 +993,7 @@ async function presentResultsAndMenu(state) {
         { label: '🔁 もう一度探索する', onClick: () => startComplementFlow() },
         {
             label: '🔄 父親側⇔母親側を入れ替えて計算', onClick: () => {
-                const swapped = { ...state, fatherSet: state.motherSet, motherSet: state.fatherSet, excludedFather: state.excludedMother, excludedMother: state.excludedFather };
-                presentResultsAndMenu(swapped);
+                presentResultsAndMenu({ ...state, swapped: !state.swapped });
             }
         },
     ]);
@@ -1042,42 +1066,43 @@ function targetsIconsHTML(targetsSet) {
 
 // ---- 計算量見積もり ----
 function buildGeneralDomains(state) {
-    const { fatherSet, motherSet, excluded, eligibleColors } = state;
+    const { roadSet, nobleSet, excluded, eligibleColors } = state;
     const sharedPool = poolExcluding(excluded);
-    let fatherGroups;
+    let roadGroups;
     if (eligibleColors) {
-        fatherGroups = eligibleColors.map(color => ({
-            f: fatherSet.p !== null ? [fatherSet.p] : poolByColor(color, excluded),
-            ff: fatherSet.gp1 !== null ? [fatherSet.gp1] : poolByColor(color, excluded),
-            fm: fatherSet.gp2 !== null ? [fatherSet.gp2] : poolByColor(color, excluded),
+        roadGroups = eligibleColors.map(color => ({
+            p1: roadSet.p !== null ? [roadSet.p] : poolByColor(color, excluded),
+            p2: roadSet.gp1 !== null ? [roadSet.gp1] : poolByColor(color, excluded),
+            p3: roadSet.gp2 !== null ? [roadSet.gp2] : poolByColor(color, excluded),
         }));
     } else {
-        fatherGroups = [{
-            f: fatherSet.p !== null ? [fatherSet.p] : sharedPool,
-            ff: fatherSet.gp1 !== null ? [fatherSet.gp1] : sharedPool,
-            fm: fatherSet.gp2 !== null ? [fatherSet.gp2] : sharedPool,
+        roadGroups = [{
+            p1: roadSet.p !== null ? [roadSet.p] : sharedPool,
+            p2: roadSet.gp1 !== null ? [roadSet.gp1] : sharedPool,
+            p3: roadSet.gp2 !== null ? [roadSet.gp2] : sharedPool,
         }];
     }
-    const motherGroup = {
-        m: motherSet.p !== null ? [motherSet.p] : sharedPool,
-        mf: motherSet.gp1 !== null ? [motherSet.gp1] : sharedPool,
-        mm: motherSet.gp2 !== null ? [motherSet.gp2] : sharedPool,
+    const nobleGroup = {
+        p1: nobleSet.p !== null ? [nobleSet.p] : sharedPool,
+        p2: nobleSet.gp1 !== null ? [nobleSet.gp1] : sharedPool,
+        p3: nobleSet.gp2 !== null ? [nobleSet.gp2] : sharedPool,
     };
-    return { fatherGroups, motherGroup };
+    return { roadGroups, nobleGroup };
 }
 
 function estimateGeneralOps(state) {
-    const { fatherGroups, motherGroup } = buildGeneralDomains(state);
-    const fatherCombos = fatherGroups.reduce((sum, g) => sum + g.f.length * g.ff.length * g.fm.length, 0);
-    const motherCombos = motherGroup.m.length * motherGroup.mf.length * motherGroup.mm.length;
-    const totalParentCombos = fatherCombos * motherCombos;
+    const { roadGroups, nobleGroup } = buildGeneralDomains(state);
+    const roadCombos = roadGroups.reduce((sum, g) => sum + g.p1.length * g.p2.length * g.p3.length, 0);
+    const nobleCombos = nobleGroup.p1.length * nobleGroup.p2.length * nobleGroup.p3.length;
+    const totalParentCombos = roadCombos * nobleCombos;
     const totalOps = totalParentCombos * state.targets.size;
     return { totalParentCombos, totalOps };
 }
 
 // ---- 探索コア（総当たり・完全精度・チャンク分割で画面が固まらないようにする） ----
 async function runGeneralSearch(state, onProgress) {
-    const { fatherGroups, motherGroup } = buildGeneralDomains(state);
+    const { roadGroups, nobleGroup } = buildGeneralDomains(state);
+    const swapped = !!state.swapped;
     const targets = [...state.targets];
     let top = [];
     let processed = 0;
@@ -1098,14 +1123,19 @@ async function runGeneralSearch(state, onProgress) {
         if (top.length > 10) top.length = 10;
     }
 
-    for (const group of fatherGroups) {
-        for (const f of group.f) {
-            for (const ff of group.ff) {
-                for (const fm of group.fm) {
-                    for (const m of motherGroup.m) {
-                        for (const mf of motherGroup.mf) {
-                            for (const mm of motherGroup.mm) {
-                                considerCombo(f, ff, fm, m, mf, mm);
+    for (const rGroup of roadGroups) {
+        for (const rp1 of rGroup.p1) {
+            for (const rp2 of rGroup.p2) {
+                for (const rp3 of rGroup.p3) {
+                    for (const np1 of nobleGroup.p1) {
+                        for (const np2 of nobleGroup.p2) {
+                            for (const np3 of nobleGroup.p3) {
+                                // 表示上の父親側/母親側へのマッピング（入れ替え状態に応じる。オーラ絞り込みは常にroad側の中身に残る）
+                                if (swapped) {
+                                    considerCombo(np1, np2, np3, rp1, rp2, rp3);
+                                } else {
+                                    considerCombo(rp1, rp2, rp3, np1, np2, np3);
+                                }
                                 processed++;
                                 sinceYield++;
                                 if (sinceYield >= CHUNK) {
@@ -1217,15 +1247,16 @@ function generalSummaryHTML(best) {
 
 // ---- 確認画面 ----
 function generalConfirmSummaryHTML(state) {
-    const { mode, targets, targetColor, fatherSet, motherSet, excluded } = state;
+    const { mode, targets, targetColor, excluded } = state;
+    const { fatherSet, motherSet, fatherDuty, motherDuty } = currentPositions(state);
     let html = `<div style="font-weight:700; margin-bottom:8px;">入力内容の確認</div>`;
     html += `<div style="font-size:0.72rem; color:var(--muted); margin-bottom:2px;">育成対象（${targets.size}体）${mode === 'battle' ? `／狙うオーラ：${targetColor}` : ''}</div>`;
     html += targetsIconsHTML(targets);
 
-    html += `<div style="font-size:0.72rem; color:var(--muted); margin:10px 0 4px;">${mode === 'battle' ? '父親側（ロード秘伝オーラ担当）' : '父親側'}</div>`;
+    html += `<div style="font-size:0.72rem; color:var(--muted); margin:10px 0 4px;">${mode === 'battle' ? `父親側（${fatherDuty}）` : '父親側'}</div>`;
     html += `<div style="display:flex; gap:5px; flex-wrap:wrap;">${fixedSlotChip(fatherSet.p, '父')}${fixedSlotChip(fatherSet.gp1, '祖父')}${fixedSlotChip(fatherSet.gp2, '祖母')}</div>`;
 
-    html += `<div style="font-size:0.72rem; color:var(--muted); margin:10px 0 4px;">${mode === 'battle' ? '母親側（ノーブル秘伝担当）' : '母親側'}</div>`;
+    html += `<div style="font-size:0.72rem; color:var(--muted); margin:10px 0 4px;">${mode === 'battle' ? `母親側（${motherDuty}）` : '母親側'}</div>`;
     html += `<div style="display:flex; gap:5px; flex-wrap:wrap;">${fixedSlotChip(motherSet.p, '母')}${fixedSlotChip(motherSet.gp1, '祖父')}${fixedSlotChip(motherSet.gp2, '祖母')}</div>`;
 
     html += `<div style="font-size:0.68rem; color:var(--muted); margin-top:10px;">探索対象から除外するモンスター：${excludedIconsHTML(excluded)}</div>`;
@@ -1269,7 +1300,12 @@ async function presentGeneralResultsAndMenu(state) {
     if (top.length === 0) {
         await botMessage('条件に合う組み合わせが見つかりませんでした。除外設定や固定枠を見直してみてください。');
     } else {
-        await botMessage(generalSummaryHTML(top[0]));
+        let summaryHtml = generalSummaryHTML(top[0]);
+        if (state.mode === 'battle') {
+            const { fatherDuty, motherDuty } = currentPositions(state);
+            summaryHtml += `<div style="font-size:0.68rem; color:var(--muted); margin-top:6px;">現在：父親側＝${fatherDuty}／母親側＝${motherDuty}</div>`;
+        }
+        await botMessage(summaryHtml);
         appendDetailButton(() => openGeneralDetailPanel(top, state.targets), '📋 全モンスター相性一覧・上位10件を見る');
     }
 
@@ -1277,8 +1313,7 @@ async function presentGeneralResultsAndMenu(state) {
         { label: '🔁 もう一度探索する', onClick: () => startGeneralFlow() },
         {
             label: '🔄 父親側⇔母親側を入れ替えて計算', onClick: () => {
-                const swapped = { ...state, fatherSet: state.motherSet, motherSet: state.fatherSet };
-                presentGeneralResultsAndMenu(swapped);
+                presentGeneralResultsAndMenu({ ...state, swapped: !state.swapped });
             }
         },
     ]);
@@ -1340,7 +1375,7 @@ async function startGeneralFlow() {
         excluded = await askExclusionSet('除外するモンスターをタップして選んでください👇', '除外モンスターを選択', excluded);
     }
 
-    const state = { mode, targets: targetsSet, targetColor, eligibleColors, fatherSet, motherSet, excluded };
+    const state = { mode, targets: targetsSet, targetColor, eligibleColors, roadSet: fatherSet, nobleSet: motherSet, excluded, swapped: false };
     await confirmAndRunGeneral(state);
 
     generalFlowRunning = false;
