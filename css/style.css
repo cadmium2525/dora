@@ -528,8 +528,48 @@ body {
 .matrix-cell:active { background: var(--accent-soft); }
 .matrix-cell.patched { outline: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 700; }
 
-/* ---------- Bottom Menu ---------- */
-.bottom-menu {
+/* ---------- タイラント常設パネル ---------- */
+.tyrant-panel {
+    width: 260px;
+    max-width: 100%;
+}
+.tyrant-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+.tyrant-role-block { margin-bottom: 10px; }
+.tyrant-role-label {
+    font-size: 0.7rem;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 5px;
+}
+.tyrant-slot-row { display: flex; gap: 6px; }
+.tyrant-slot {
+    flex: 1;
+    background: #10202b;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px 2px 8px;
+    text-align: center;
+    cursor: pointer;
+}
+.tyrant-slot:active { background: var(--accent-soft); }
+.tyrant-slot.filled { border-color: var(--accent); }
+.tyrant-slot img { width: 38px; height: 38px; object-fit: contain; margin: 2px 0; }
+.tyrant-slot-sub { font-size: 0.6rem; color: var(--muted); }
+.tyrant-slot-name { font-size: 0.66rem; margin-top: 1px; }
+.tyrant-slot-empty { font-size: 1.3rem; color: var(--muted); padding: 8px 0 4px; }
+.tyrant-panel-divider {
+    border-top: 1px solid var(--border);
+    margin: 12px 0 10px;
+}
+
+/* ---------- Bottom Menu ---------- */.bottom-menu {
     flex: 0 0 auto;
     display: flex;
     background: var(--header-bg);

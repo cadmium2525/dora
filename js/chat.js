@@ -258,115 +258,14 @@ function askAndPickMonster(questionHtml, trayTitle) {
 }
 
 // =========================================================
-// スライダー入力（吹き出し内インタラクティブUI）
+// Gift / Tyrant フロー（常設パネル式：既存ツールに近いUIをチャット内に埋め込む）
 // =========================================================
-let sliderStepCounter = 0;
+function defaultGiftInput() { return { f: null, ff: null, fm: null, m: null, mf: null, mm: null, s3: 0, s2: 0, noble: 0 }; }
 
-function askSliderStep({ label, min, max, def, formatValue, note }) {
-    return new Promise(resolve => {
-        sliderStepCounter++;
-        const uid = `sl-${sliderStepCounter}`;
-        botMessage(`
-            <div class="slider-bubble">
-                <div class="sb-label">${label}${note ? `<br><span style="opacity:.7">${note}</span>` : ''}</div>
-                <div class="sb-label">現在値：<span class="sb-value" id="${uid}-val">${formatValue ? formatValue(def) : def}</span></div>
-                <div class="slider-row">
-                    <button class="adj-btn" id="${uid}-minus">−</button>
-                    <input type="range" id="${uid}-range" min="${min}" max="${max}" value="${def}">
-                    <button class="adj-btn" id="${uid}-plus">＋</button>
-                </div>
-                <div class="bubble-buttons"><button class="bubble-btn" id="${uid}-ok">この値で決定</button></div>
-            </div>
-        `).then(() => {
-            const range = document.getElementById(`${uid}-range`);
-            const valEl = document.getElementById(`${uid}-val`);
-            const update = v => { valEl.textContent = formatValue ? formatValue(v) : v; };
-            range.addEventListener('input', () => update(Number(range.value)));
-            document.getElementById(`${uid}-minus`).onclick = () => { range.value = Math.max(min, Number(range.value) - 1); update(Number(range.value)); };
-            document.getElementById(`${uid}-plus`).onclick = () => { range.value = Math.min(max, Number(range.value) + 1); update(Number(range.value)); };
-            document.getElementById(`${uid}-ok`).onclick = () => {
-                const v = Number(range.value);
-                // 操作不能化
-                [`${uid}-minus`, `${uid}-plus`, `${uid}-ok`].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
-                range.disabled = true;
-                userMessage(`${label}：<b>${formatValue ? formatValue(v) : v}</b>`);
-                resolve(v);
-            };
-        });
-    });
-}
-
-function askNobleStep() {
-    return new Promise(resolve => {
-        sliderStepCounter++;
-        const uid = `nb-${sliderStepCounter}`;
-        let mode = 'val'; // 'val' or 'star'
-        botMessage(`
-            <div class="slider-bubble">
-                <div class="segment-mini">
-                    <div id="${uid}-m-star">★(ノーブル秘伝の個数)</div>
-                    <div id="${uid}-m-val" class="active">123(加算値を直接入力)</div>
-                </div>
-                <div class="sb-label">ノーブル加算値：<span class="sb-value" id="${uid}-val">0</span></div>
-                <div class="slider-row">
-                    <button class="adj-btn" id="${uid}-minus">−</button>
-                    <input type="range" id="${uid}-range" min="0" max="300" value="0">
-                    <button class="adj-btn" id="${uid}-plus">＋</button>
-                </div>
-                <div class="bubble-buttons"><button class="bubble-btn" id="${uid}-ok">この値で決定</button></div>
-            </div>
-        `).then(() => {
-            const range = document.getElementById(`${uid}-range`);
-            const valEl = document.getElementById(`${uid}-val`);
-            const mStar = document.getElementById(`${uid}-m-star`);
-            const mVal = document.getElementById(`${uid}-m-val`);
-
-            function computedNoble() {
-                const raw = Number(range.value);
-                if (mode === 'star') return raw === 0 ? 0 : (currentNobleData[raw] || 0);
-                return raw;
-            }
-            function refresh() {
-                valEl.textContent = mode === 'star' ? `${computedNoble()} (★${range.value})` : computedNoble();
-            }
-            function setMode(m) {
-                mode = m;
-                mStar.classList.toggle('active', m === 'star');
-                mVal.classList.toggle('active', m === 'val');
-                range.max = m === 'star' ? 36 : 300;
-                range.value = 0;
-                refresh();
-            }
-            mStar.onclick = () => setMode('star');
-            mVal.onclick = () => setMode('val');
-            range.addEventListener('input', refresh);
-            document.getElementById(`${uid}-minus`).onclick = () => { range.value = Math.max(Number(range.min), Number(range.value) - 1); refresh(); };
-            document.getElementById(`${uid}-plus`).onclick = () => { range.value = Math.min(Number(range.max), Number(range.value) + 1); refresh(); };
-            document.getElementById(`${uid}-ok`).onclick = () => {
-                const noble = computedNoble();
-                [`${uid}-minus`, `${uid}-plus`, `${uid}-ok`].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
-                range.disabled = true; mStar.style.pointerEvents = 'none'; mVal.style.pointerEvents = 'none';
-                userMessage(`ノーブル加算値：<b>${noble}</b>`);
-                resolve(noble);
-            };
-        });
-    });
-}
-
-// =========================================================
-// Gift / Tyrant フロー
-// =========================================================
-const GIFT_STEPS = [
-    { key: 'f', label: '父親', q: 'まずは【父親】を選んでください👇' },
-    { key: 'ff', label: '祖父（父方）', q: '次に【父方の祖父】を選んでください👇' },
-    { key: 'fm', label: '祖母（父方）', q: '続いて【父方の祖母】を選んでください👇' },
-    { key: 'm', label: '母親', q: '次は【母親】です👇' },
-    { key: 'mf', label: '祖父（母方）', q: '【母方の祖父】を選んでください👇' },
-    { key: 'mm', label: '祖母（母方）', q: '最後に【母方の祖母】を選んでください👇' },
-];
-
-let giftInput = { f: null, ff: null, fm: null, m: null, mf: null, mm: null, s3: 0, s2: 0, noble: 0 };
-let giftFlowRunning = false;
+let giftInput = defaultGiftInput();
+let giftPanelContainer = null; // パネルを表示している吹き出し(.bubble)への参照
+let giftNobleMode = 'val'; // 'val'(直接入力) or 'star'(個数)。パネル内でのみ保持（保存はしない）
+let giftNobleRaw = 0; // スライダーの生値（starモードでは★の個数、valモードでは加算値そのもの）。パネル再描画時に星選択が失われないようにするため保持
 
 function saveGiftInput() {
     try { localStorage.setItem(LS_KEY_GIFT_INPUT, JSON.stringify(giftInput)); } catch (e) { /* ignore */ }
@@ -377,40 +276,6 @@ function loadGiftInput() {
         if (!raw) return null;
         return JSON.parse(raw);
     } catch (e) { return null; }
-}
-
-async function runGiftMonsterSteps(prefill) {
-    for (const step of GIFT_STEPS) {
-        if (prefill && prefill[step.key] !== null && prefill[step.key] !== undefined) {
-            giftInput[step.key] = prefill[step.key];
-            continue;
-        }
-        const idx = await askAndPickMonster(step.q, `${step.label}を選択`);
-        giftInput[step.key] = idx;
-        userMonsterCard(idx, step.label);
-    }
-}
-
-async function runGiftValueSteps(prefill) {
-    if (prefill && prefill.s3 !== undefined) { giftInput.s3 = prefill.s3; }
-    else { giftInput.s3 = await askSliderStep({ label: '共通秘伝III の所持数は？', min: 0, max: 20, def: 0, formatValue: v => `${v}個` }); }
-
-    if (prefill && prefill.s2 !== undefined) { giftInput.s2 = prefill.s2; }
-    else { giftInput.s2 = await askSliderStep({ label: '共通秘伝II の所持数は？', min: 0, max: 20, def: 0, formatValue: v => `${v}個` }); }
-
-    if (prefill && prefill.noble !== undefined) { giftInput.noble = prefill.noble; }
-    else { giftInput.noble = await askNobleStep(); }
-}
-
-function giftSummaryHTML() {
-    const rows = GIFT_STEPS.map(s => `<div class="bubble-card" style="margin-bottom:4px;"><img src="${imgOf(giftInput[s.key])}" onerror="this.style.display='none'"><div><div class="cc-label">${s.label}</div><div class="cc-name">${MONSTER_NAMES[giftInput[s.key]]}</div></div></div>`).join('');
-    return `
-        <div style="font-weight:700; margin-bottom:6px;">入力内容の確認</div>
-        ${rows}
-        <div style="margin-top:6px; font-size:0.82rem; color:var(--muted);">
-            共通秘伝III：${giftInput.s3}個 ／ 共通秘伝II：${giftInput.s2}個 ／ ノーブル加算：${giftInput.noble}
-        </div>
-    `;
 }
 
 function computeGiftResults() {
@@ -459,59 +324,6 @@ function closeDetailPanel() {
     document.getElementById('detail-overlay').classList.remove('show');
 }
 
-async function afterResultsMenu() {
-    showQuickReplies([
-        { label: '🔁 親だけ変更して再計算', onClick: () => startGiftFlow({ mode: 'keep-values' }) },
-        { label: '🆕 最初からやり直す', onClick: () => startGiftFlow({ mode: 'fresh' }) },
-        { label: '💾 この内容のまま終了', onClick: async () => { saveGiftInput(); await botMessage('保存しました。次回起動時にこの内容を呼び出せます。'); } },
-    ]);
-}
-
-async function startGiftFlow(opts = {}) {
-    if (giftFlowRunning) return;
-    giftFlowRunning = true;
-    clearQuickReplies();
-    setHeader('gift');
-
-    let prefillMonsters = null;
-    let prefillValues = null;
-
-    if (opts.mode === 'restore') {
-        prefillMonsters = opts.data;
-        prefillValues = opts.data;
-    } else if (opts.mode === 'keep-values') {
-        prefillValues = { s3: giftInput.s3, s2: giftInput.s2, noble: giftInput.noble };
-    } else if (opts.mode === 'fresh') {
-        // no prefill
-        await botMessage('了解です、最初から入力していきましょう！');
-    } else if (!opts.mode) {
-        await botMessage('タイラント計算を始めましょう🎁<br>親・祖父母を6体選んで、共通秘伝とノーブル値を入力すると、育成候補モンスターの相性ランキングを計算します。');
-    }
-
-    giftInput = { f: null, ff: null, fm: null, m: null, mf: null, mm: null, s3: 0, s2: 0, noble: 0 };
-
-    await runGiftMonsterSteps(prefillMonsters);
-    await runGiftValueSteps(prefillValues);
-
-    await botMessage(giftSummaryHTML());
-    showQuickReplies([
-        { label: '✅ この内容で計算する', onClick: runGiftCalculation },
-        { label: '✏️ もう一度入力し直す', onClick: () => startGiftFlow({ mode: 'fresh' }) },
-    ]);
-
-    giftFlowRunning = false;
-}
-
-async function runGiftCalculation() {
-    clearQuickReplies();
-    await botMessage('計算しています…🔮');
-    const results = computeGiftResults();
-    saveGiftInput();
-    await botMessage(resultSummaryHTML(results));
-    appendResultDetailButton(results);
-    await afterResultsMenu();
-}
-
 function appendResultDetailButton(results) {
     const rows = chatLog.querySelectorAll('.msg-row.bot');
     const last = rows[rows.length - 1];
@@ -521,6 +333,163 @@ function appendResultDetailButton(results) {
     btnWrap.innerHTML = `<button class="bubble-btn">📋 詳細な全体ランキングを見る</button>`;
     btnWrap.querySelector('button').onclick = () => openDetailPanelWithResults(results);
     bubble.appendChild(btnWrap);
+}
+
+// ---- パネルUI ----
+function giftSlotCellHTML(key, label) {
+    const idx = giftInput[key];
+    if (idx === null || idx === undefined) {
+        return `<div class="tyrant-slot" data-key="${key}"><div class="tyrant-slot-sub">${label}</div><div class="tyrant-slot-empty">＋</div><div class="tyrant-slot-sub" style="color:var(--muted);">未選択</div></div>`;
+    }
+    return `<div class="tyrant-slot filled" data-key="${key}"><div class="tyrant-slot-sub">${label}</div><img src="${imgOf(idx)}" onerror="this.style.display='none'"><div class="tyrant-slot-name">${MONSTER_NAMES[idx]}</div></div>`;
+}
+
+function giftPanelHTML() {
+    return `
+        <div class="tyrant-panel">
+            <div class="tyrant-panel-header">
+                <span>親・祖父母を指定</span>
+                <button class="chip-btn" id="tyrant-reset-btn">リセット</button>
+            </div>
+            <div class="tyrant-role-block">
+                <div class="tyrant-role-label">父親側</div>
+                <div class="tyrant-slot-row">
+                    ${giftSlotCellHTML('f', '父親')}${giftSlotCellHTML('ff', '祖父')}${giftSlotCellHTML('fm', '祖母')}
+                </div>
+            </div>
+            <div class="tyrant-role-block">
+                <div class="tyrant-role-label">母親側</div>
+                <div class="tyrant-slot-row">
+                    ${giftSlotCellHTML('m', '母親')}${giftSlotCellHTML('mf', '祖父')}${giftSlotCellHTML('mm', '祖母')}
+                </div>
+            </div>
+            <div class="tyrant-panel-divider"></div>
+            <div class="tyrant-panel-header"><span>共通秘伝・加算値</span></div>
+            <div class="slider-bubble" style="width:auto; margin-bottom:10px;">
+                <div class="sb-label">共通秘伝III：<span class="sb-value" id="ty-s3-val">${giftInput.s3}個</span></div>
+                <div class="slider-row">
+                    <button class="adj-btn" id="ty-s3-minus">−</button>
+                    <input type="range" id="ty-s3-range" min="0" max="20" value="${giftInput.s3}">
+                    <button class="adj-btn" id="ty-s3-plus">＋</button>
+                </div>
+            </div>
+            <div class="slider-bubble" style="width:auto; margin-bottom:10px;">
+                <div class="sb-label">共通秘伝II：<span class="sb-value" id="ty-s2-val">${giftInput.s2}個</span></div>
+                <div class="slider-row">
+                    <button class="adj-btn" id="ty-s2-minus">−</button>
+                    <input type="range" id="ty-s2-range" min="0" max="20" value="${giftInput.s2}">
+                    <button class="adj-btn" id="ty-s2-plus">＋</button>
+                </div>
+            </div>
+            <div class="slider-bubble" style="width:auto;">
+                <div class="segment-mini">
+                    <div id="ty-noble-star" class="${giftNobleMode === 'star' ? 'active' : ''}">★(個数)</div>
+                    <div id="ty-noble-val" class="${giftNobleMode === 'val' ? 'active' : ''}">123(直接入力)</div>
+                </div>
+                <div class="sb-label">ノーブル加算値：<span class="sb-value" id="ty-noble-display">${giftInput.noble}</span></div>
+                <div class="slider-row">
+                    <button class="adj-btn" id="ty-noble-minus">−</button>
+                    <input type="range" id="ty-noble-range" min="0" max="${giftNobleMode === 'star' ? 36 : 300}" value="${giftNobleRaw}">
+                    <button class="adj-btn" id="ty-noble-plus">＋</button>
+                </div>
+            </div>
+            <div class="bubble-buttons" style="margin-top:12px;"><button class="bubble-btn" id="tyrant-calc-btn">✅ 計算する</button></div>
+        </div>
+    `;
+}
+
+function attachGiftPanelHandlers(container) {
+    // 親・祖父母スロット
+    container.querySelectorAll('.tyrant-slot').forEach(slot => {
+        slot.onclick = () => {
+            const key = slot.dataset.key;
+            pickMonsterViaTrayRaw(`${slot.querySelector('.tyrant-slot-sub').textContent}を選択`, () => { /* キャンセル時は何もしない */ }).then(idx => {
+                giftInput[key] = idx;
+                refreshGiftPanel();
+            });
+        };
+    });
+
+    // リセット
+    container.querySelector('#tyrant-reset-btn').onclick = () => {
+        giftInput = defaultGiftInput();
+        refreshGiftPanel();
+    };
+
+    // 共通秘伝III
+    const s3Range = container.querySelector('#ty-s3-range');
+    const s3Val = container.querySelector('#ty-s3-val');
+    const updateS3 = v => { giftInput.s3 = v; s3Val.textContent = `${v}個`; };
+    s3Range.addEventListener('input', () => updateS3(Number(s3Range.value)));
+    container.querySelector('#ty-s3-minus').onclick = () => { s3Range.value = Math.max(0, Number(s3Range.value) - 1); updateS3(Number(s3Range.value)); };
+    container.querySelector('#ty-s3-plus').onclick = () => { s3Range.value = Math.min(20, Number(s3Range.value) + 1); updateS3(Number(s3Range.value)); };
+
+    // 共通秘伝II
+    const s2Range = container.querySelector('#ty-s2-range');
+    const s2Val = container.querySelector('#ty-s2-val');
+    const updateS2 = v => { giftInput.s2 = v; s2Val.textContent = `${v}個`; };
+    s2Range.addEventListener('input', () => updateS2(Number(s2Range.value)));
+    container.querySelector('#ty-s2-minus').onclick = () => { s2Range.value = Math.max(0, Number(s2Range.value) - 1); updateS2(Number(s2Range.value)); };
+    container.querySelector('#ty-s2-plus').onclick = () => { s2Range.value = Math.min(20, Number(s2Range.value) + 1); updateS2(Number(s2Range.value)); };
+
+    // ノーブル
+    const nbRange = container.querySelector('#ty-noble-range');
+    const nbDisplay = container.querySelector('#ty-noble-display');
+    const nbStar = container.querySelector('#ty-noble-star');
+    const nbVal = container.querySelector('#ty-noble-val');
+    function computedNoble() {
+        const raw = Number(nbRange.value);
+        if (giftNobleMode === 'star') return raw === 0 ? 0 : (currentNobleData[raw] || 0);
+        return raw;
+    }
+    function refreshNoble() {
+        giftNobleRaw = Number(nbRange.value);
+        giftInput.noble = computedNoble();
+        nbDisplay.textContent = giftNobleMode === 'star' ? `${giftInput.noble} (★${nbRange.value})` : giftInput.noble;
+    }
+    nbStar.onclick = () => { giftNobleMode = 'star'; giftNobleRaw = 0; nbRange.max = 36; nbRange.value = 0; nbStar.classList.add('active'); nbVal.classList.remove('active'); refreshNoble(); };
+    nbVal.onclick = () => { giftNobleMode = 'val'; giftNobleRaw = giftInput.noble; nbRange.max = 300; nbRange.value = giftInput.noble; nbStar.classList.remove('active'); nbVal.classList.add('active'); refreshNoble(); };
+    nbRange.addEventListener('input', refreshNoble);
+    container.querySelector('#ty-noble-minus').onclick = () => { nbRange.value = Math.max(0, Number(nbRange.value) - 1); refreshNoble(); };
+    container.querySelector('#ty-noble-plus').onclick = () => { nbRange.value = Math.min(Number(nbRange.max), Number(nbRange.value) + 1); refreshNoble(); };
+    refreshNoble();
+
+    // 計算する
+    container.querySelector('#tyrant-calc-btn').onclick = runGiftCalculation;
+}
+
+function refreshGiftPanel() {
+    if (!giftPanelContainer) return;
+    giftPanelContainer.innerHTML = giftPanelHTML();
+    attachGiftPanelHandlers(giftPanelContainer);
+}
+
+async function startGiftFlow(overrides) {
+    setHeader('gift');
+    clearQuickReplies();
+    const saved = loadGiftInput();
+    giftInput = saved ? { ...defaultGiftInput(), ...saved } : defaultGiftInput();
+    if (overrides) giftInput = { ...giftInput, ...overrides };
+    giftNobleMode = 'val';
+    giftNobleRaw = giftInput.noble;
+
+    await botMessage('タイラント計算を始めましょう🎁<br>下のパネルで親・祖父母を選び、共通秘伝やノーブル値を調整してから「計算する」を押してください。前回の内容は自動で読み込まれています。値を変えて何度でも再計算できます。');
+    const row = await botMessage(giftPanelHTML());
+    giftPanelContainer = row.querySelector('.bubble');
+    attachGiftPanelHandlers(giftPanelContainer);
+}
+
+async function runGiftCalculation() {
+    if (['f', 'ff', 'fm', 'm', 'mf', 'mm'].some(k => giftInput[k] === null || giftInput[k] === undefined)) {
+        alert('親・祖父母を6体すべて選択してください。');
+        return;
+    }
+    await botMessage('計算しています…🔮');
+    const results = computeGiftResults();
+    saveGiftInput();
+    await botMessage(resultSummaryHTML(results));
+    appendResultDetailButton(results);
+    await botMessage('上のパネルで内容を変えると、いつでも再計算できます。');
 }
 
 // =========================================================
@@ -824,24 +793,44 @@ function openComboDetailPanel(combos, targetSymbol, childId) {
 
 async function applyComboToGift(combo, targetSymbol) {
     const itemRes = calculateItemsForScore(combo.rawScore, targetSymbol);
-    const data = { f: combo.f, ff: combo.ff, fm: combo.fm, m: combo.m, mf: combo.mf, mm: combo.mm, s3: itemRes.s3, s2: itemRes.s2, noble: itemRes.noble };
+    const overrides = { f: combo.f, ff: combo.ff, fm: combo.fm, m: combo.m, mf: combo.mf, mm: combo.mm, s3: itemRes.s3, s2: itemRes.s2, noble: itemRes.noble };
     closeAnySubView();
-    setHeader('gift');
     sysNote('補完探索の候補をタイラントに反映しました');
-    await startGiftFlow({ mode: 'restore', data });
+    await startGiftFlow(overrides);
 }
 
 function comboSummaryHTML(combos, targetSymbol) {
-    const top3 = combos.slice(0, 3);
-    const rows = top3.map((c, i) => {
-        const itemRes = calculateItemsForScore(c.rawScore, targetSymbol);
-        return `<div class="result-summary-row">
-            <span class="rank">${i + 1}</span>
-            <span>${getSymbol(itemRes.totalScore)} 父:${MONSTER_NAMES[c.f]} / 母:${MONSTER_NAMES[c.m]}</span>
-            <span class="score">${itemRes.totalScore.toFixed(1)}</span>
-        </div>`;
-    }).join('');
-    return `<div style="font-weight:700; margin-bottom:4px;">計算結果（上位3組）</div><div class="result-summary-list">${rows}</div>`;
+    const best = combos[0];
+    const itemRes = calculateItemsForScore(best.rawScore, targetSymbol);
+    const finalScore = itemRes.totalScore;
+    const itemsNote = (itemRes.s3 > 0 || itemRes.s2 > 0 || itemRes.noble > 0)
+        ? `<div style="margin-top:6px; font-size:0.72rem; color:var(--muted);">推奨秘伝：共通III ${itemRes.s3}個 / 共通II ${itemRes.s2}個 / ノーブル加算 ${itemRes.noble}</div>` : '';
+    return `
+        <div style="font-weight:700; margin-bottom:6px;">🏆 最適な組み合わせが見つかりました</div>
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+            <span style="color:${SYMBOL_COLOR[getSymbol(finalScore)]}">${getSymbol(finalScore)}</span>
+            <b>${finalScore.toFixed(1)}</b>
+        </div>
+        <div style="display:flex; gap:14px; flex-wrap:wrap;">
+            <div>
+                <div style="font-size:0.65rem; color:var(--muted); margin-bottom:2px;">父親側</div>
+                <div style="display:flex; gap:4px;">
+                    <div style="text-align:center;"><img src="${imgOf(best.f)}" style="width:32px;height:32px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[best.f]}</div></div>
+                    <div style="text-align:center;"><img src="${imgOf(best.ff)}" style="width:32px;height:32px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[best.ff]}</div></div>
+                    <div style="text-align:center;"><img src="${imgOf(best.fm)}" style="width:32px;height:32px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[best.fm]}</div></div>
+                </div>
+            </div>
+            <div>
+                <div style="font-size:0.65rem; color:var(--muted); margin-bottom:2px;">母親側</div>
+                <div style="display:flex; gap:4px;">
+                    <div style="text-align:center;"><img src="${imgOf(best.m)}" style="width:32px;height:32px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[best.m]}</div></div>
+                    <div style="text-align:center;"><img src="${imgOf(best.mf)}" style="width:32px;height:32px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[best.mf]}</div></div>
+                    <div style="text-align:center;"><img src="${imgOf(best.mm)}" style="width:32px;height:32px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${MONSTER_NAMES[best.mm]}</div></div>
+                </div>
+            </div>
+        </div>
+        ${itemsNote}
+    `;
 }
 
 function appendDetailButton(onClick, label = '📋 上位10件の詳細を見る') {
@@ -1260,11 +1249,10 @@ function openGeneralDetailPanel(top, targetsSet) {
 }
 
 async function applyGeneralComboToGift(entry) {
-    const data = { f: entry.f, ff: entry.ff, fm: entry.fm, m: entry.m, mf: entry.mf, mm: entry.mm };
+    const overrides = { f: entry.f, ff: entry.ff, fm: entry.fm, m: entry.m, mf: entry.mf, mm: entry.mm };
     closeAnySubView();
-    setHeader('gift');
     sysNote('汎用探索の候補をタイラントに反映しました');
-    await startGiftFlow({ mode: 'restore', data });
+    await startGiftFlow(overrides);
 }
 
 function generalSummaryHTML(best) {
@@ -1409,24 +1397,6 @@ async function startGeneralFlow() {
 }
 
 // =========================================================
-// 起動時：前回入力の復元チェック
-// =========================================================
-async function maybeOfferRestore() {
-    const saved = loadGiftInput();
-    const hasAllMonsters = saved && GIFT_STEPS.every(s => saved[s.key] !== null && saved[s.key] !== undefined);
-    if (!hasAllMonsters) {
-        await startGiftFlow();
-        return;
-    }
-    sysNote('前回の入力データを読み込みました');
-    await botMessage('前回入力した内容が保存されています。この内容を引き継いで計算しますか？');
-    showQuickReplies([
-        { label: '▶️ 前回の内容で再開', onClick: () => startGiftFlow({ mode: 'restore', data: saved }) },
-        { label: '🆕 新しく入力する', onClick: () => startGiftFlow({ mode: 'fresh' }) },
-    ]);
-}
-
-// =========================================================
 // 下部メニュー（機能切替）
 // =========================================================
 const FEATURE_META = {
@@ -1446,13 +1416,12 @@ async function selectFeature(feature) {
     closeAnySubView();
     setHeader(feature);
     // ナビゲーションでの切り替えは常に新しく開始する（別の探索が進行中でも切り替えられるようにする）
-    giftFlowRunning = false;
     complementFlowRunning = false;
     generalFlowRunning = false;
     clearQuickReplies();
     if (feature === 'gift') {
         sysNote('タイラント タブに切り替えました');
-        await maybeOfferRestore();
+        await startGiftFlow();
         return;
     }
     if (feature === 'reverse') {
