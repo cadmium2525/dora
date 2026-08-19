@@ -1400,7 +1400,7 @@ async function startGeneralFlow() {
 // 下部メニュー（機能切替）
 // =========================================================
 const FEATURE_META = {
-    gift: { title: 'ギフトンBot', icon: '🎁' },
+    gift: { title: 'タイラントBot', icon: '🎁' },
     reverse: { title: '補完探索Bot', icon: '🧩' },
     general: { title: '汎用探索Bot', icon: '🔍' },
 };
