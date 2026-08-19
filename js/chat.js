@@ -182,6 +182,7 @@ let pendingTrayCancel = null; // トレイを閉じた（=選ばずに離脱し�
 
 function openTray(title) {
     trayTitle.textContent = title;
+    clearTrayConfirmButton(); // 前回のトレイで設定した確定ボタンが残らないようにリセット
     tray.classList.add('show');
     trayOverlay.classList.add('show');
 }
@@ -198,6 +199,21 @@ function cancelTray() {
         cb();
     }
 }
+
+// トレイ上部（閉じるボタンの左側）に確定ボタンを出す。複数選択系のトレイで、
+// 選択のたびに上までスクロールしなくても確定できるようにするためのもの。
+function setTrayConfirmButton(label, onClick) {
+    const btn = document.getElementById('tray-confirm-btn');
+    if (!label) {
+        btn.style.display = 'none';
+        btn.onclick = null;
+        return;
+    }
+    btn.textContent = label;
+    btn.style.display = 'inline-block';
+    btn.onclick = onClick;
+}
+function clearTrayConfirmButton() { setTrayConfirmButton(null); }
 
 // 生のトレイ選択（1体・キャンセルするとonCancelが呼ばれ、Promiseは解決しない＝呼び出し元でリトライ可能にする）
 function pickMonsterViaTrayRaw(title, onCancel) {
@@ -584,12 +600,14 @@ function pickExclusionSetRaw(title, initialSet, onCancel) {
     return new Promise(resolve => {
         pendingTrayCancel = onCancel;
         const localSet = new Set(initialSet);
+        function confirmDone() {
+            pendingTrayCancel = null; clearTrayConfirmButton(); closeTray(); resolve(localSet);
+        }
         function draw() {
             trayBody.innerHTML = `
                 <div style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
                     <button class="chip-btn" id="ex-clear">全解除</button>
                     <button class="chip-btn" id="ex-nonnoble">ノーブル以外を一括除外</button>
-                    <button class="chip-btn" id="ex-done">この内容で決定（${localSet.size}体除外中）</button>
                 </div>
                 <div class="monster-grid" id="ex-grid"></div>
             `;
@@ -607,10 +625,10 @@ function pickExclusionSetRaw(title, initialSet, onCancel) {
                 MONSTER_NAMES.forEach((name, idx) => { if (!isNobleMonster(idx)) localSet.add(idx); });
                 draw();
             };
-            document.getElementById('ex-done').onclick = () => { pendingTrayCancel = null; closeTray(); resolve(localSet); };
+            setTrayConfirmButton(`決定（${localSet.size}体除外）`, confirmDone);
         }
-        draw();
         openTray(title);
+        draw();
     });
 }
 
@@ -681,7 +699,8 @@ function combineUnits(childId, pUnits, mUnits) {
     for (const p of pUnits) for (const m of mUnits) {
         const fmScore = getComb(p.id, m.id);
         const total = p.score + m.score + fmScore + 224;
-        all.push({ f: p.id, ff: p.gp1, fm: p.gp2, m: m.id, mf: m.gp1, mm: m.gp2, child: childId, rawScore: total });
+        const roadColor = p.roadColor !== undefined ? p.roadColor : (m.roadColor !== undefined ? m.roadColor : null);
+        all.push({ f: p.id, ff: p.gp1, fm: p.gp2, m: m.id, mf: m.gp1, mm: m.gp2, child: childId, rawScore: total, roadColor });
     }
     all.sort((a, b) => b.rawScore - a.rawScore);
     return all;
@@ -752,6 +771,7 @@ function comboCardHTML(combo, rank, targetSymbol) {
     const finalScore = itemRes.totalScore;
     const itemsNote = (itemRes.s3 > 0 || itemRes.s2 > 0 || itemRes.noble > 0)
         ? `<div style="margin-top:6px; font-size:0.72rem; color:var(--muted);">推奨秘伝：共通III ${itemRes.s3}個 / 共通II ${itemRes.s2}個 / ノーブル加算 ${itemRes.noble}</div>` : '';
+    const roadColorNote = combo.roadColor ? `<div style="margin-top:2px; font-size:0.68rem; color:var(--muted);">🎨 ロード秘伝オーラ：<b style="color:var(--accent);">${combo.roadColor}</b>で統一</div>` : '';
     return `
         <div class="result-cell" style="grid-column: span 2; text-align:left; display:flex; gap:8px; align-items:flex-start;">
             <div style="flex:0 0 auto; font-weight:700; color:var(--gold);">#${rank}</div>
@@ -779,6 +799,7 @@ function comboCardHTML(combo, rank, targetSymbol) {
                     </div>
                 </div>
                 ${itemsNote}
+                ${roadColorNote}
                 <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn" data-idx="${rank - 1}">🎁 この組み合わせでタイラントを使う</button></div>
             </div>
         </div>
@@ -840,7 +861,7 @@ function computeCombos(state) {
     const { child, roadSet, nobleSet, excludedRoad, excludedNoble, eligibleColors } = state;
     let roadUnits;
     if (eligibleColors) {
-        roadUnits = eligibleColors.flatMap(color => computeUnitCandidates(child, roadSet.p, roadSet.gp1, roadSet.gp2, poolByColor(color, excludedRoad)));
+        roadUnits = eligibleColors.flatMap(color => computeUnitCandidates(child, roadSet.p, roadSet.gp1, roadSet.gp2, poolByColor(color, excludedRoad)).map(u => ({ ...u, roadColor: color })));
     } else {
         roadUnits = computeUnitCandidates(child, roadSet.p, roadSet.gp1, roadSet.gp2, poolExcluding(excludedRoad));
     }
@@ -984,6 +1005,9 @@ async function presentResultsAndMenu(state) {
         if (state.mode === 'battle') {
             const { fatherDuty, motherDuty } = currentPositions(state);
             summaryHtml += `<div style="font-size:0.68rem; color:var(--muted); margin-top:6px;">現在：父親側＝${fatherDuty}／母親側＝${motherDuty}</div>`;
+            if (combos[0].roadColor) {
+                summaryHtml += `<div style="font-size:0.68rem; color:var(--muted); margin-top:2px;">🎨 最上位の組み合わせのロード秘伝オーラ：<b style="color:var(--accent);">${combos[0].roadColor}</b></div>`;
+            }
         }
         await botMessage(summaryHtml);
         appendDetailButton(() => openComboDetailPanel(combos, state.targetSymbol, state.child));
@@ -1010,12 +1034,15 @@ function pickTargetsRaw(title, initialSet, onCancel) {
     return new Promise(resolve => {
         pendingTrayCancel = onCancel;
         const localSet = new Set(initialSet);
+        function confirmDone() {
+            if (localSet.size < 2) { alert('育成対象は2体以上選択してください。'); return; }
+            pendingTrayCancel = null; clearTrayConfirmButton(); closeTray(); resolve(localSet);
+        }
         function draw() {
             trayBody.innerHTML = `
                 <div style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
                     <button class="chip-btn" id="tg-all">全血統を一括指定（33体）</button>
                     <button class="chip-btn" id="tg-clear">全解除</button>
-                    <button class="chip-btn" id="tg-done">この内容で決定（${localSet.size}体選択中）</button>
                 </div>
                 <div class="monster-grid" id="tg-grid"></div>
             `;
@@ -1029,13 +1056,10 @@ function pickTargetsRaw(title, initialSet, onCancel) {
             });
             document.getElementById('tg-all').onclick = () => { MONSTER_NAMES.forEach((_, i) => localSet.add(i)); draw(); };
             document.getElementById('tg-clear').onclick = () => { localSet.clear(); draw(); };
-            document.getElementById('tg-done').onclick = () => {
-                if (localSet.size < 2) { alert('育成対象は2体以上選択してください。'); return; }
-                pendingTrayCancel = null; closeTray(); resolve(localSet);
-            };
+            setTrayConfirmButton(`決定（${localSet.size}体）`, confirmDone);
         }
-        draw();
         openTray(title);
+        draw();
     });
 }
 
@@ -1071,6 +1095,7 @@ function buildGeneralDomains(state) {
     let roadGroups;
     if (eligibleColors) {
         roadGroups = eligibleColors.map(color => ({
+            color,
             p1: roadSet.p !== null ? [roadSet.p] : poolByColor(color, excluded),
             p2: roadSet.gp1 !== null ? [roadSet.gp1] : poolByColor(color, excluded),
             p3: roadSet.gp2 !== null ? [roadSet.gp2] : poolByColor(color, excluded),
@@ -1110,7 +1135,7 @@ async function runGeneralSearch(state, onProgress) {
     const CHUNK = 20000;
     let sinceYield = 0;
 
-    function considerCombo(f, ff, fm, m, mf, mm) {
+    function considerCombo(f, ff, fm, m, mf, mm, roadColor) {
         let minScore = Infinity;
         const worst = top.length === 10 ? top[9].minScore : -Infinity;
         for (const t of targets) {
@@ -1118,7 +1143,7 @@ async function runGeneralSearch(state, onProgress) {
             if (s < minScore) minScore = s;
             if (minScore <= worst) return; // これ以上調べても上位10には入れない
         }
-        top.push({ f, ff, fm, m, mf, mm, minScore });
+        top.push({ f, ff, fm, m, mf, mm, minScore, roadColor });
         top.sort((a, b) => b.minScore - a.minScore);
         if (top.length > 10) top.length = 10;
     }
@@ -1132,9 +1157,9 @@ async function runGeneralSearch(state, onProgress) {
                             for (const np3 of nobleGroup.p3) {
                                 // 表示上の父親側/母親側へのマッピング（入れ替え状態に応じる。オーラ絞り込みは常にroad側の中身に残る）
                                 if (swapped) {
-                                    considerCombo(np1, np2, np3, rp1, rp2, rp3);
+                                    considerCombo(np1, np2, np3, rp1, rp2, rp3, rGroup.color);
                                 } else {
-                                    considerCombo(rp1, rp2, rp3, np1, np2, np3);
+                                    considerCombo(rp1, rp2, rp3, np1, np2, np3, rGroup.color);
                                 }
                                 processed++;
                                 sinceYield++;
@@ -1176,6 +1201,7 @@ function comboParentsBlockHTML(entry) {
             </div>
         </div>
         <div style="margin-top:6px; font-size:0.78rem;">最低保証：<b style="color:${SYMBOL_COLOR[getSymbol(entry.minScore)]}">${getSymbol(entry.minScore)} ${entry.minScore.toFixed(1)}</b></div>
+        ${entry.roadColor ? `<div style="margin-top:2px; font-size:0.68rem; color:var(--muted);">🎨 ロード秘伝オーラ：<b style="color:var(--accent);">${entry.roadColor}</b>で統一</div>` : ''}
     `;
 }
 
@@ -1288,11 +1314,12 @@ async function confirmAndRunGeneral(state) {
 
 async function presentGeneralResultsAndMenu(state) {
     clearQuickReplies();
-    const progressRow = await botMessage(`計算しています…🔮<div class="progress-bar-wrap"><div class="progress-bar-fill" id="gen-progress-fill" style="width:0%"></div></div><div id="gen-progress-text" style="font-size:0.68rem; color:var(--muted); margin-top:4px;">0%</div>`);
+    const progressUid = `gen-progress-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const progressRow = await botMessage(`計算しています…🔮<div class="progress-bar-wrap"><div class="progress-bar-fill" id="${progressUid}-fill" style="width:0%"></div></div><div id="${progressUid}-text" style="font-size:0.68rem; color:var(--muted); margin-top:4px;">0%</div>`);
     const top = await runGeneralSearch(state, (done, total) => {
         const pct = total > 0 ? Math.min(100, Math.floor((done / total) * 100)) : 100;
-        const fill = document.getElementById('gen-progress-fill');
-        const text = document.getElementById('gen-progress-text');
+        const fill = document.getElementById(`${progressUid}-fill`);
+        const text = document.getElementById(`${progressUid}-text`);
         if (fill) fill.style.width = pct + '%';
         if (text) text.textContent = `${pct}%（${done.toLocaleString()} / ${total.toLocaleString()} 組み合わせ）`;
     });
@@ -1629,6 +1656,7 @@ function resetAllData() {
     localStorage.removeItem(LS_KEY_BLOODLINE);
     localStorage.removeItem(LS_KEY_OWNED_AURA);
     localStorage.removeItem(LS_KEY_PATCH);
+    localStorage.removeItem(LS_KEY_ONBOARDING);
     bloodlineData = JSON.parse(JSON.stringify(DEFAULT_BLOODLINE_DATA));
     ownedAuraData = loadOwnedAura();
     patchData = {};
@@ -1642,12 +1670,24 @@ function resetAllData() {
 // =========================================================
 // 初期化
 // =========================================================
+const LS_KEY_ONBOARDING = 'line_onboarding_shown';
+
 async function showWelcomeMessage() {
     document.getElementById('header-title').textContent = 'ギフトンBot';
     document.getElementById('header-bot-avatar').textContent = '🤖';
     document.getElementById('header-subtitle').textContent = 'モードを選んでください';
     await botMessage('はじめまして、LMFギフトンツールのBotです🎉<br>モンスターの相性計算や配合候補の探索をお手伝いします。');
     await botMessage('下のナビゲーションバーから使いたいモードを選んでください👇<br>🎁 タイラント：親を指定して育成候補モンスターを計算<br>🧩 補完探索：育成したいモンスターから足りない親を自動探索<br>🔍 汎用探索：複数の育成対象すべてに対する最適な親・祖父母を探索');
+
+    let alreadyShown = false;
+    try { alreadyShown = localStorage.getItem(LS_KEY_ONBOARDING) === '1'; } catch (e) { /* ignore */ }
+    if (!alreadyShown) {
+        await botMessage('はじめる前に、右上の⚙️「データ管理」も確認しておくと計算結果がより正確になります👇<br>・<b>血統データ</b>：各モンスターの血統が持つオーラ／ノーブル情報<br>・<b>所持ロード秘伝オーラ</b>：あなたが実際に所持しているオーラ（バトル用育成の探索で使用）<br>・<b>基礎相性値</b>：相性値を独自に修正したい場合に使用（通常は初期値のままでOK）');
+        showQuickReplies([
+            { label: '⚙️ データ管理を開く', onClick: () => { try { localStorage.setItem(LS_KEY_ONBOARDING, '1'); } catch (e) { /* ignore */ } openSettingsPanel(); } },
+            { label: '後でやる', onClick: () => { try { localStorage.setItem(LS_KEY_ONBOARDING, '1'); } catch (e) { /* ignore */ } } },
+        ]);
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
