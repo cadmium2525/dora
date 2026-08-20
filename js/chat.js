@@ -489,7 +489,13 @@ async function runGiftCalculation() {
     saveGiftInput();
     await botMessage(resultSummaryHTML(results));
     appendResultDetailButton(results);
-    await botMessage('上のパネルで内容を変えると、いつでも再計算できます。');
+    const tipRow = await botMessage('上のパネルで内容を変えると、いつでも再計算できます。<div class="bubble-buttons"><button class="bubble-btn">⬆️ パネルへ</button></div>');
+    const scrollBtn = tipRow.querySelector('button');
+    if (scrollBtn) {
+        scrollBtn.onclick = () => {
+            if (giftPanelContainer) giftPanelContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        };
+    }
 }
 
 // =========================================================
@@ -1626,6 +1632,7 @@ function resetAllData() {
     localStorage.removeItem(LS_KEY_OWNED_AURA);
     localStorage.removeItem(LS_KEY_PATCH);
     localStorage.removeItem(LS_KEY_ONBOARDING);
+    localStorage.removeItem(LS_KEY_VISITED);
     bloodlineData = JSON.parse(JSON.stringify(DEFAULT_BLOODLINE_DATA));
     ownedAuraData = loadOwnedAura();
     patchData = {};
@@ -1640,12 +1647,30 @@ function resetAllData() {
 // 初期化
 // =========================================================
 const LS_KEY_ONBOARDING = 'line_onboarding_shown';
+const LS_KEY_VISITED = 'line_visited_before';
+
+function timeBasedGreeting() {
+    const hour = new Date().getHours();
+    if (hour >= 5 && hour < 11) return 'おはようございます！';
+    if (hour >= 11 && hour < 18) return 'こんにちは！';
+    return 'こんばんは！';
+}
 
 async function showWelcomeMessage() {
     document.getElementById('header-title').textContent = 'ギフトンBot';
     document.getElementById('header-bot-avatar').textContent = '🤖';
     document.getElementById('header-subtitle').textContent = 'モードを選んでください';
-    await botMessage('はじめまして、LMFギフトンツールのBotです🎉<br>モンスターの相性計算や配合候補の探索をお手伝いします。');
+
+    let visitedBefore = false;
+    try { visitedBefore = localStorage.getItem(LS_KEY_VISITED) === '1'; } catch (e) { /* ignore */ }
+
+    if (!visitedBefore) {
+        await botMessage('はじめまして、LMFギフトンツールのBotです🎉<br>モンスターの相性計算や配合候補の探索をお手伝いします。');
+    } else {
+        await botMessage(`${timeBasedGreeting()}<br>LMFギフトンツールのBotです🎁<br>今日もモンスターの相性計算・配合候補の探索をお手伝いします。`);
+    }
+    try { localStorage.setItem(LS_KEY_VISITED, '1'); } catch (e) { /* ignore */ }
+
     await botMessage('下のナビゲーションバーから使いたいモードを選んでください👇<br>🎁 タイラント：親を指定して育成候補モンスターを計算<br>🧩 補完探索：育成したいモンスターから足りない親を自動探索<br>🔍 汎用探索：複数の育成対象すべてに対する最適な親・祖父母を探索');
 
     let alreadyShown = false;
