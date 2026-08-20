@@ -473,7 +473,7 @@ async function startGiftFlow(overrides) {
     giftNobleMode = 'val';
     giftNobleRaw = giftInput.noble;
 
-    await botMessage('タイラント計算を始めましょう🎁<br>下のパネルで親・祖父母を選び、共通秘伝やノーブル値を調整してから「計算する」を押してください。前回の内容は自動で読み込まれています。値を変えて何度でも再計算できます。');
+    await botMessage('タイラント計算を始めましょう💪<br>下のパネルで親・祖父母を選び、共通秘伝やノーブル値を調整してから「計算する」を押してください。前回の内容は自動で読み込まれています。値を変えて何度でも再計算できます。');
     const row = await botMessage(giftPanelHTML());
     giftPanelContainer = row.querySelector('.bubble');
     attachGiftPanelHandlers(giftPanelContainer);
@@ -775,7 +775,7 @@ function comboCardHTML(combo, rank, targetSymbol) {
                 </div>
                 ${itemsNote}
                 ${roadColorNote}
-                <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn" data-idx="${rank - 1}">🎁 この組み合わせでタイラントを使う</button></div>
+                <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn" data-idx="${rank - 1}">💪 この組み合わせでタイラントを使う</button></div>
             </div>
         </div>
     `;
@@ -1206,7 +1206,7 @@ function generalCardHTML(entry, rank) {
             <div style="flex:0 0 auto; font-weight:700; color:var(--gold);">#${rank}</div>
             <div style="flex:1;">
                 ${comboParentsBlockHTML(entry)}
-                <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn-gen" data-idx="${rank - 1}">🎁 タイラントを使う</button></div>
+                <div class="bubble-buttons" style="margin-top:6px;"><button class="chip-btn mx-gift-btn-gen" data-idx="${rank - 1}">💪 タイラントを使う</button></div>
             </div>
         </div>
     `;
@@ -1239,7 +1239,7 @@ function openGeneralDetailPanel(top, targetsSet) {
     body.innerHTML = `
         <div style="font-weight:700; margin-bottom:6px;">🏆 最適な組み合わせ</div>
         ${comboParentsBlockHTML(best)}
-        <div class="bubble-buttons" style="margin:8px 0;"><button class="chip-btn mx-gift-btn-gen-best">🎁 この組み合わせでタイラントを使う</button></div>
+        <div class="bubble-buttons" style="margin:8px 0;"><button class="chip-btn mx-gift-btn-gen-best">💪 この組み合わせでタイラントを使う</button></div>
         <div style="font-size:0.75rem; color:var(--muted); margin:12px 0 6px;">全モンスターとの相性一覧（⭐=指定した育成対象）</div>
         ${generalBestFullGridHTML(best, targetsSet)}
         <div style="font-weight:700; margin:16px 0 8px;">上位10件の組み合わせ</div>
@@ -1406,9 +1406,10 @@ async function startGeneralFlow() {
 // 下部メニュー（機能切替）
 // =========================================================
 const FEATURE_META = {
-    gift: { title: 'タイラントBot', icon: '🎁' },
+    gift: { title: 'タイラントBot', icon: '💪' },
     reverse: { title: '補完探索Bot', icon: '🧩' },
     general: { title: '汎用探索Bot', icon: '🔍' },
+    diagnosis: { title: '相性診断Bot', icon: '🧬' },
 };
 
 function setHeader(feature) {
@@ -1424,6 +1425,7 @@ async function selectFeature(feature) {
     // ナビゲーションでの切り替えは常に新しく開始する（別の探索が進行中でも切り替えられるようにする）
     complementFlowRunning = false;
     generalFlowRunning = false;
+    diagFlowRunning = false;
     clearQuickReplies();
     if (feature === 'gift') {
         sysNote('タイラント タブに切り替えました');
@@ -1440,10 +1442,15 @@ async function selectFeature(feature) {
         await startGeneralFlow();
         return;
     }
+    if (feature === 'diagnosis') {
+        sysNote('相性診断 タブに切り替えました');
+        await startDiagnosisFlow();
+        return;
+    }
     sysNote(`${FEATURE_META[feature].title.replace('Bot', '')} タブに切り替えました`);
     await botMessage(`${FEATURE_META[feature].icon} この機能は現在チャットUI対応の準備中です。<br>今しばらくお待ちください🙏`);
     showQuickReplies([
-        { label: '🎁 タイラントを使う', onClick: () => selectFeature('gift') },
+        { label: '💪 タイラントを使う', onClick: () => selectFeature('gift') },
         { label: '🧩 補完探索を使う', onClick: () => selectFeature('reverse') },
     ]);
 }
@@ -1455,8 +1462,172 @@ function closeAnySubView() {
 }
 
 // =========================================================
-// 設定パネル（データ管理・血統データ）
+// 相性診断（複数モンスターに対する「育成モンスターの時」「親や祖父母にしたい時」の同時ランキング）
 // =========================================================
+let diagFlowRunning = false;
+let diagSelected = []; // 選択順を保持する配列
+
+// 育成モンスターの時：選択モンスターSを子、候補Xを親とみなす → getComb(S, X)
+// 親や祖父母にしたい時：候補Xを子、選択モンスターSを親とみなす → getComb(X, S)
+function diagnoseRanking(selectedList, direction) {
+    const results = MONSTER_NAMES.map((name, x) => {
+        const values = selectedList.map(s => direction === 'asChild' ? getComb(s, x) : getComb(x, s));
+        const min = Math.min(...values);
+        const avg = values.reduce((a, b) => a + b, 0) / values.length;
+        const max = Math.max(...values);
+        return { id: x, values, min, avg, max };
+    });
+    results.sort((a, b) => {
+        if (b.min !== a.min) return b.min - a.min;
+        if (b.avg !== a.avg) return b.avg - a.avg;
+        return b.max - a.max;
+    });
+    return results;
+}
+
+// ---- 診断対象の複数選択（選択順を保持・最低1体） ----
+function pickDiagnosisTargetsRaw(title, initialArr, onCancel) {
+    return new Promise(resolve => {
+        pendingTrayCancel = onCancel;
+        let localArr = [...initialArr];
+        function confirmDone() {
+            if (localArr.length < 1) { alert('診断対象を1体以上選択してください。'); return; }
+            pendingTrayCancel = null; clearTrayConfirmButton(); closeTray(); resolve(localArr);
+        }
+        function draw() {
+            trayBody.innerHTML = `
+                <div style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+                    <button class="chip-btn" id="dg-clear">全解除</button>
+                </div>
+                <div class="monster-grid" id="dg-grid"></div>
+            `;
+            const grid = document.getElementById('dg-grid');
+            MONSTER_NAMES.forEach((name, idx) => {
+                const pos = localArr.indexOf(idx);
+                const cell = document.createElement('div');
+                cell.className = 'monster-cell' + (pos !== -1 ? ' included' : '');
+                cell.innerHTML = `<img src="${imgOf(idx)}" onerror="this.style.opacity=0"><span>${name}${pos !== -1 ? `（${pos + 1}）` : ''}</span>`;
+                cell.onclick = () => {
+                    const p = localArr.indexOf(idx);
+                    if (p !== -1) localArr.splice(p, 1); else localArr.push(idx);
+                    draw();
+                };
+                grid.appendChild(cell);
+            });
+            document.getElementById('dg-clear').onclick = () => { localArr = []; draw(); };
+            setTrayConfirmButton(`決定（${localArr.length}体）`, confirmDone);
+        }
+        openTray(title);
+        draw();
+    });
+}
+
+function askDiagnosisTargets(questionHtml, trayTitle) {
+    return new Promise(resolve => {
+        botMessage(`${questionHtml}<div class="bubble-buttons"><button class="bubble-btn">👉 タップして選ぶ（1体以上・タップ順を記録）</button></div>`).then(row => {
+            const btn = row.querySelector('button');
+            const openFlow = () => {
+                btn.disabled = true;
+                btn.textContent = '選択中…（トレイを開いています）';
+                pickDiagnosisTargetsRaw(trayTitle, [], () => {
+                    btn.disabled = false;
+                    btn.textContent = '👉 タップして選ぶ（1体以上・タップ順を記録）';
+                }).then(arr => {
+                    btn.disabled = true;
+                    btn.textContent = `✅ ${arr.length}体を選択`;
+                    resolve(arr);
+                });
+            };
+            btn.onclick = openFlow;
+        });
+    });
+}
+
+// ---- 結果表示 ----
+function diagEntryHTML(entry, rank, selectedList, compact) {
+    const iconSize = compact ? 26 : 34;
+    const showBreakdown = selectedList.length > 1;
+    const breakdown = showBreakdown ? `<div class="diag-breakdown">${selectedList.map((s, i) => `<span class="diag-chip"><img src="${imgOf(s)}" style="width:${compact ? 13 : 16}px;height:${compact ? 13 : 16}px;" onerror="this.style.display='none'">${entry.values[i].toFixed(1)}</span>`).join('')}</div>` : '';
+    return `
+        <div class="diag-entry">
+            <div class="diag-entry-main">
+                <span class="diag-rank">${rank}位</span>
+                <img src="${imgOf(entry.id)}" style="width:${iconSize}px;height:${iconSize}px;" onerror="this.style.display='none'">
+                <span class="diag-score">${entry.min.toFixed(1)}</span>
+            </div>
+            ${breakdown}
+        </div>
+    `;
+}
+
+function diagColumnHTML(title, results, selectedList, limit, compact) {
+    const list = results.slice(0, limit);
+    return `
+        <div class="diag-column">
+            <div class="diag-column-title">${title}</div>
+            ${list.map((e, i) => diagEntryHTML(e, i + 1, selectedList, compact)).join('')}
+        </div>
+    `;
+}
+
+function diagTwoColumnHTML(childResults, parentResults, selectedList, limit, compact) {
+    return `<div class="diag-grid">
+        ${diagColumnHTML('👶 育成モンスターの時', childResults, selectedList, limit, compact)}
+        ${diagColumnHTML('👪 親や祖父母にしたい時', parentResults, selectedList, limit, compact)}
+    </div>`;
+}
+
+function openDiagDetailPanel(childResults, parentResults, selectedList) {
+    document.getElementById('detail-panel-title').textContent = '相性診断：全モンスターランキング';
+    const body = document.getElementById('detail-panel-body');
+    body.innerHTML = diagTwoColumnHTML(childResults, parentResults, selectedList, MONSTER_NAMES.length, false);
+    document.getElementById('detail-panel').classList.add('show');
+    document.getElementById('detail-overlay').classList.add('show');
+}
+
+async function presentDiagnosisResults() {
+    await botMessage('計算しています…🔮');
+    const childResults = diagnoseRanking(diagSelected, 'asChild');
+    const parentResults = diagnoseRanking(diagSelected, 'asParent');
+    await botMessage(diagTwoColumnHTML(childResults, parentResults, diagSelected, 10, true));
+    appendDetailButton(() => openDiagDetailPanel(childResults, parentResults, diagSelected), '📋 詳細な全体ランキングを見る');
+    showQuickReplies([
+        { label: '🔁 もう一度診断する', onClick: () => startDiagnosisFlow() },
+    ]);
+}
+
+function diagSelectedSummaryHTML(selectedList) {
+    const icons = selectedList.map((idx, i) => `<div style="text-align:center;"><img src="${imgOf(idx)}" style="width:32px;height:32px;" onerror="this.style.display='none'"><div style="font-size:0.6rem;">${i + 1}. ${MONSTER_NAMES[idx]}</div></div>`).join('');
+    return `<div style="font-weight:700; margin-bottom:6px;">選択した診断対象（${selectedList.length}体・選択順）</div><div style="display:flex; flex-wrap:wrap; gap:8px;">${icons}</div>`;
+}
+
+async function startDiagnosisFlow() {
+    if (diagFlowRunning) return;
+    diagFlowRunning = true;
+    clearQuickReplies();
+    setHeader('diagnosis');
+    diagSelected = [];
+
+    await botMessage('モンスター間の相性を診断します🧬<br>育成モンスターとして相性が良い相手と、親・祖父母として使いやすい相手をまとめてチェックできます！');
+
+    diagSelected = await askDiagnosisTargets('診断したいモンスターを選んでください（1体以上）👇', '診断対象を選択');
+
+    await botMessage(diagSelectedSummaryHTML(diagSelected));
+    const action = await quickReplyPromise([
+        { label: '🧬 相性を診断する', value: 'go' },
+        { label: '✏️ 選び直す', value: 'retry' },
+    ]);
+    if (action === 'retry') {
+        diagFlowRunning = false;
+        await startDiagnosisFlow();
+        return;
+    }
+
+    await presentDiagnosisResults();
+    diagFlowRunning = false;
+}
+
+
 function loadBloodlineData() {
     try {
         const raw = localStorage.getItem(LS_KEY_BLOODLINE);
@@ -1667,11 +1838,11 @@ async function showWelcomeMessage() {
     if (!visitedBefore) {
         await botMessage('はじめまして、LMFギフトンツールのBotです🎉<br>モンスターの相性計算や配合候補の探索をお手伝いします。');
     } else {
-        await botMessage(`${timeBasedGreeting()}<br>LMFギフトンツールのBotです🎁<br>今日もモンスターの相性計算・配合候補の探索をお手伝いします。`);
+        await botMessage(`${timeBasedGreeting()}<br>LMFギフトンツールのBotです💪<br>今日もモンスターの相性計算・配合候補の探索をお手伝いします。`);
     }
     try { localStorage.setItem(LS_KEY_VISITED, '1'); } catch (e) { /* ignore */ }
 
-    await botMessage('下のナビゲーションバーから使いたいモードを選んでください👇<br>🎁 タイラント：親を指定して育成候補モンスターを計算<br>🧩 補完探索：育成したいモンスターから足りない親を自動探索<br>🔍 汎用探索：複数の育成対象すべてに対する最適な親・祖父母を探索');
+    await botMessage('下のナビゲーションバーから使いたいモードを選んでください👇<br>💪 タイラント：親・祖父母を指定して育成候補モンスターとの相性を計算<br>🧩 補完探索：育成したいモンスターに対して最適となる親祖父母の組み合わせを条件に応じて自動探索<br>🔍 汎用探索：複数の育成対象すべてに対する最適な親・祖父母を探索');
 
     let alreadyShown = false;
     try { alreadyShown = localStorage.getItem(LS_KEY_ONBOARDING) === '1'; } catch (e) { /* ignore */ }

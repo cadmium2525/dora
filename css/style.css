@@ -569,6 +569,53 @@ body {
     margin: 12px 0 10px;
 }
 
+/* ---------- 相性診断（左右2列） ---------- */
+.diag-grid {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+}
+.diag-column { flex: 1 1 50%; min-width: 0; }
+.diag-column-title {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 6px;
+    text-align: center;
+}
+.diag-entry {
+    background: #10202b;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 4px;
+    margin-bottom: 5px;
+}
+.diag-entry-main {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    justify-content: center;
+}
+.diag-rank { font-size: 0.6rem; color: var(--gold); font-weight: 700; flex: 0 0 auto; }
+.diag-score { font-size: 0.66rem; font-weight: 700; color: var(--accent); margin-left: auto; flex: 0 0 auto; }
+.diag-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-top: 4px;
+    justify-content: center;
+}
+.diag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    background: #0006;
+    border-radius: 5px;
+    padding: 1px 4px;
+    font-size: 0.56rem;
+    color: var(--bot-bubble-text);
+}
+
 /* ---------- Bottom Menu ---------- */.bottom-menu {
     flex: 0 0 auto;
     display: flex;

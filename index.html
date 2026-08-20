@@ -25,7 +25,7 @@
     <!-- Header (LINE風トークヘッダー) -->
     <header id="app-header">
         <button id="header-back-btn" class="header-icon-btn" onclick="closeAnySubView()" style="visibility:hidden;">‹</button>
-        <div id="header-bot-avatar" class="bot-avatar">🎁</div>
+        <div id="header-bot-avatar" class="bot-avatar">💪</div>
         <div class="header-title-block">
             <div id="header-title" class="header-title">ギフトンBot</div>
             <div id="header-subtitle" class="header-subtitle">オンライン</div>
@@ -103,13 +103,16 @@
     <!-- 下部メニュー（LINEのリッチメニュー相当） -->
     <nav id="bottom-menu" class="bottom-menu">
         <button class="menu-item" data-feature="gift" onclick="selectFeature('gift')">
-            <span class="menu-icon">🎁</span><span>タイラント</span>
+            <span class="menu-icon">💪</span><span>タイラント</span>
         </button>
         <button class="menu-item" data-feature="reverse" onclick="selectFeature('reverse')">
             <span class="menu-icon">🧩</span><span>補完探索</span>
         </button>
         <button class="menu-item" data-feature="general" onclick="selectFeature('general')">
             <span class="menu-icon">🔍</span><span>汎用探索</span>
+        </button>
+        <button class="menu-item" data-feature="diagnosis" onclick="selectFeature('diagnosis')">
+            <span class="menu-icon">🧬</span><span>相性診断</span>
         </button>
     </nav>
 
