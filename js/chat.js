@@ -493,7 +493,14 @@ async function runGiftCalculation() {
     const scrollBtn = tipRow.querySelector('button');
     if (scrollBtn) {
         scrollBtn.onclick = () => {
-            if (giftPanelContainer) giftPanelContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // scrollIntoView({behavior:'smooth'})はネイティブのスムーズスクロールを開始してしまい、
+            // 直後に他メッセージの scrollChatToBottom()（scrollTopの直接書き換え）と競合して
+            // それ以降の自動最下部スクロールが効かなくなることがあるため、直接ジャンプ方式に統一する。
+            if (!giftPanelContainer) return;
+            const chatRect = chatLog.getBoundingClientRect();
+            const panelRect = giftPanelContainer.getBoundingClientRect();
+            const relativeTop = panelRect.top - chatRect.top + chatLog.scrollTop;
+            chatLog.scrollTop = Math.max(0, relativeTop - 12);
         };
     }
 }
