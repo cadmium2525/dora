@@ -583,6 +583,24 @@ body {
     margin-bottom: 6px;
     text-align: center;
 }
+.diag-selected-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font-size: 0.64rem;
+    font-weight: 700;
+    color: var(--muted);
+    background: #0006;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 8px;
+    margin-bottom: 10px;
+}
+.diag-selected-summary img {
+    border-radius: 4px;
+}
 .diag-entry {
     background: #10202b;
     border: 1px solid var(--border);

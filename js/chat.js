@@ -1567,6 +1567,12 @@ function diagEntryHTML(entry, rank, selectedList, compact) {
     `;
 }
 
+function diagSelectedIconsHTML(selectedList, compact) {
+    const size = compact ? 16 : 20;
+    const icons = selectedList.map(idx => `<img src="${imgOf(idx)}" style="width:${size}px;height:${size}px;" onerror="this.style.display='none'" title="${MONSTER_NAMES[idx]}">`).join('');
+    return `<div class="diag-selected-summary">選択したモンスター：${icons}</div>`;
+}
+
 function diagColumnHTML(title, results, selectedList, limit, compact) {
     const list = results.slice(0, limit);
     return `
@@ -1577,17 +1583,20 @@ function diagColumnHTML(title, results, selectedList, limit, compact) {
     `;
 }
 
-function diagTwoColumnHTML(childResults, parentResults, selectedList, limit, compact) {
-    return `<div class="diag-grid">
-        ${diagColumnHTML('👶 育成モンスターの時', childResults, selectedList, limit, compact)}
-        ${diagColumnHTML('👪 親や祖父母にしたい時', parentResults, selectedList, limit, compact)}
-    </div>`;
+function diagTwoColumnHTML(childResults, parentResults, selectedList, limit, compact, showSelectedSummary) {
+    return `
+        ${showSelectedSummary ? diagSelectedIconsHTML(selectedList, compact) : ''}
+        <div class="diag-grid">
+            ${diagColumnHTML('👶 育成モンスターの時', childResults, selectedList, limit, compact)}
+            ${diagColumnHTML('👪 親や祖父母にしたい時', parentResults, selectedList, limit, compact)}
+        </div>
+    `;
 }
 
 function openDiagDetailPanel(childResults, parentResults, selectedList) {
     document.getElementById('detail-panel-title').textContent = '相性診断：全モンスターランキング';
     const body = document.getElementById('detail-panel-body');
-    body.innerHTML = diagTwoColumnHTML(childResults, parentResults, selectedList, MONSTER_NAMES.length, false);
+    body.innerHTML = diagTwoColumnHTML(childResults, parentResults, selectedList, MONSTER_NAMES.length, false, true);
     document.getElementById('detail-panel').classList.add('show');
     document.getElementById('detail-overlay').classList.add('show');
 }
@@ -1849,7 +1858,7 @@ async function showWelcomeMessage() {
     }
     try { localStorage.setItem(LS_KEY_VISITED, '1'); } catch (e) { /* ignore */ }
 
-    await botMessage('下のナビゲーションバーから使いたいモードを選んでください👇<br>💪 タイラント：親・祖父母を指定して育成候補モンスターとの相性を計算<br>🧩 補完探索：育成したいモンスターに対して最適となる親祖父母の組み合わせを条件に応じて自動探索<br>🔍 汎用探索：複数の育成対象すべてに対する最適な親・祖父母を探索');
+    await botMessage('下のナビゲーションバーから使いたいモードを選んでください👇<br>💪 タイラント：親・祖父母を指定して育成候補モンスターとの相性を計算<br>🧩 補完探索：育成したいモンスターに対して最適となる親祖父母の組み合わせを条件に応じて自動探索<br>🔍 汎用探索：複数の育成対象すべてに対する最適な親・祖父母を探索<br>🧬 相性診断：選んだモンスターに対して、育成モンスターとして／親や祖父母として、それぞれ相性の良い相手を全モンスターの中からランキング表示');
 
     let alreadyShown = false;
     try { alreadyShown = localStorage.getItem(LS_KEY_ONBOARDING) === '1'; } catch (e) { /* ignore */ }
